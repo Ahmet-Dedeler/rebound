@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>YouTube Focus Guard</title>
+  <link rel="stylesheet" type="text/css" href="popup.css">
+</head>
+<body>
+  <h1>YouTube Focus Guard</h1>
+  
+  <div>
+    <h2>Current Preferences:</h2>
+    <div id="preferredKeywords"></div>
+    <div id="nonPreferredKeywords"></div>
+  </div>
+
+  <button id="updatePreferences">Update Preferences</button>
+
+  <div>
+    <label>
+      <input type="checkbox" id="warningsEnabled">
+      Enable Warnings
+    </label>
+  </div>
+  <div>
+    <label>
+      <input type="checkbox" id="extensionPaused">
+      Pause Extension
+    </label>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html> 

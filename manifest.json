@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Focus Guard",
+  "version": "0.1.0",
+  "description": "Helps you avoid procrastination on YouTube by analyzing video content.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://www.youtube.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/watch?v=*"],
+      "js": ["content_script.js"],
+      "css": ["warning_style.css"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "images/icon16.png",
+      "48": "images/icon48.png",
+      "128": "images/icon128.png"
+    }
+  },
+  "options_page": "options.html",
+  "icons": {
+    "16": "images/icon16.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["warning_modal.html"],
+      "matches": ["*://*.youtube.com/*"]
+    }
+  ]
+} 
