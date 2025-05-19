@@ -17,9 +17,10 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.youtube.com/watch?v=*"],
-      "js": ["content_script.js"],
-      "css": ["warning_style.css"]
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["quotes.js", "content_script.js"],
+      "css": ["warning_style.css"],
+      "run_at": "document_idle"
     }
   ],
   "action": {
@@ -38,7 +39,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["warning_modal.html"],
+      "resources": ["warning_modal.html", "quotes.js"],
       "matches": ["*://*.youtube.com/*"]
     }
   ]

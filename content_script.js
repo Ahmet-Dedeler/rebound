@@ -1,61 +1,446 @@
-// Content script for YouTube Focus Guard
-console.log("[CS] Content script loaded on a YouTube watch page. v2");
+// Content script for YouTube Focus Guard v9
+console.log("[CS] Content script loading with improved SPA support. v9");
 
+// State variables
+let isVideoPage = false;
+let currentVideoId = null;
+let videoDetailsExtracted = false;
 let modalInjected = false;
 let modalElement = null;
+let continueButtonTimer = null;
+let countdownValue = 5;
+let processingInProgress = false;
+let navigationObserverSet = false;
 
-// Function to find the main video player
+// Initialize when DOM is ready or immediately if already loaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initialize);
+} else {
+  initialize();
+}
+
+// Wait for YouTube to be ready (it's a complex SPA)
+function initialize() {
+  console.log("[CS] Initializing content script");
+  
+  // Check current page once on initialization
+  checkCurrentPage();
+  
+  // Set up message listener for background communication
+  setupMessageListener();
+  
+  // Set up navigation detection once the document is ready
+  setupNavigationDetection();
+  
+  // Set up an interval to check the current page regularly as a fallback
+  setInterval(checkCurrentPage, 1000);
+}
+
+// Set up detection for YouTube SPA navigation
+function setupNavigationDetection() {
+  if (navigationObserverSet) return;
+  
+  try {
+    // Method 1: Watch for URL changes using history API modification
+    const pushState = history.pushState;
+    const replaceState = history.replaceState;
+    
+    history.pushState = function() {
+      pushState.apply(history, arguments);
+      console.log("[CS] pushState detected, checking page");
+      setTimeout(checkCurrentPage, 500);
+    };
+    
+    history.replaceState = function() {
+      replaceState.apply(history, arguments);
+      console.log("[CS] replaceState detected, checking page");
+      setTimeout(checkCurrentPage, 500);
+    };
+    
+    // Listen for popstate events (browser back/forward)
+    window.addEventListener('popstate', () => {
+      console.log("[CS] popstate detected, checking page");
+      setTimeout(checkCurrentPage, 500);
+    });
+    
+    // Method 2: Watch for body mutations as a fallback
+    if (document.body) {
+      const bodyObserver = new MutationObserver((mutations) => {
+        // Only check if something substantial changed
+        if (mutations.some(m => m.addedNodes.length > 0 || m.removedNodes.length > 0)) {
+          checkCurrentPage();
+        }
+      });
+      
+      bodyObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: false,
+        characterData: false
+      });
+      
+      console.log("[CS] Body mutation observer set up");
+    } else {
+      // If body isn't ready yet, try again after a delay
+      console.log("[CS] Body not available yet, will retry navigation detection setup");
+      setTimeout(setupNavigationDetection, 1000);
+      return;
+    }
+    
+    navigationObserverSet = true;
+    console.log("[CS] Navigation detection set up successfully");
+  } catch (error) {
+    console.error("[CS] Error setting up navigation detection:", error);
+  }
+}
+
+// Check if we're on a YouTube video page
+function checkCurrentPage() {
+  try {
+    const url = window.location.href;
+    const videoId = getVideoIdFromUrl(url);
+    
+    // Determine if we're on a video page with a valid video ID
+    const onVideoPage = videoId && url.includes('youtube.com/watch');
+    
+    // If not already processing this video
+    if (onVideoPage && (!isVideoPage || videoId !== currentVideoId)) {
+      console.log(`[CS] Detected new video: ${url} (ID: ${videoId}, previous: ${currentVideoId})`);
+      
+      isVideoPage = true;
+      currentVideoId = videoId;
+      videoDetailsExtracted = false;
+      
+      // Process the video after a slight delay to let page content load
+      setTimeout(processVideoPage, 1000);
+    } 
+    // If we've navigated away from a video page
+    else if (!onVideoPage && isVideoPage) {
+      console.log("[CS] Left video page");
+      isVideoPage = false;
+      currentVideoId = null;
+      videoDetailsExtracted = false;
+    }
+  } catch (error) {
+    console.error("[CS] Error in checkCurrentPage:", error);
+  }
+}
+
+// Process a video page by extracting details and sending to background
+function processVideoPage() {
+  if (!isVideoPage || processingInProgress) return;
+  
+  try {
+    processingInProgress = true;
+    console.log("[CS] Processing video page");
+    
+    // Make sure YouTube page is fully loaded before extraction
+    if (document.readyState !== 'complete') {
+      console.log("[CS] Page not fully loaded, delaying extraction");
+      setTimeout(() => {
+        processingInProgress = false;
+        processVideoPage();
+      }, 1000);
+      return;
+    }
+    
+    // Extract video details
+    const details = extractVideoDetails();
+    
+    // Only send if we have a title
+    if (details.videoTitle) {
+      console.log("[CS] Sending video details to background script");
+      console.log("[CS] Title:", details.videoTitle);
+      console.log("[CS] Description:", details.videoDescription || "(No description)");
+      
+      // Ensure videoDescription is never undefined (server rejects undefined values)
+      const videoDescription = details.videoDescription || "";
+      
+      chrome.runtime.sendMessage({
+        action: "fullVideoDetails",
+        videoTitle: details.videoTitle,
+        videoDescription: videoDescription
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("[CS] Error sending video details:", chrome.runtime.lastError);
+        } else {
+          console.log("[CS] Background script response:", response);
+        }
+        processingInProgress = false;
+      });
+      
+      videoDetailsExtracted = true;
+    } else {
+      // If extraction failed, retry after a delay
+      console.log("[CS] Video details extraction failed, retrying in 2 seconds");
+      setTimeout(() => {
+        processingInProgress = false;
+        processVideoPage();
+      }, 2000);
+    }
+  } catch (error) {
+    console.error("[CS] Error processing video page:", error);
+    processingInProgress = false;
+  }
+}
+
+// Extract video ID from URL
+function getVideoIdFromUrl(url) {
+  try {
+    const match = url.match(/[?&]v=([^&#]*)/);
+    return match ? match[1] : null;
+  } catch (error) {
+    console.error("[CS] Error extracting video ID:", error);
+    return null;
+  }
+}
+
+// Extract video details
+function extractVideoDetails() {
+  let videoTitle = "";
+  let videoDescription = ""; // Initialize with empty string instead of undefined
+
+  try {
+    // Try multiple ways to get the title
+    // First check document.title directly (most reliable)
+    if (document.title && document.title !== "YouTube") {
+      videoTitle = document.title.replace(' - YouTube', '').trim();
+    }
+
+    // If title is still empty, try various selectors
+    if (!videoTitle || videoTitle === '' || videoTitle === 'YouTube') {
+      const titleSelectors = [
+        'h1.title', 
+        'h1.ytd-watch-metadata',
+        'ytd-watch-metadata h1.title',
+        'h1.title yt-formatted-string',
+        '#container h1.title', 
+        '#meta h1',
+        '#above-the-fold #title h1',
+        '#title h1',
+        '#title',
+        '#info-contents h1',
+        '#video-title',
+        'meta[property="og:title"]',
+        'meta[name="title"]'
+      ];
+
+      for (const selector of titleSelectors) {
+        const element = document.querySelector(selector);
+        if (element) {
+          const text = element.matches('meta') ? element.content : element.textContent;
+          if (text && text.trim()) {
+            videoTitle = text.trim();
+            break;
+          }
+        }
+      }
+    }
+
+    console.log("[CS] Extracted title:", videoTitle);
+    
+    // Try to get the description - multiple approaches
+    const descriptionSelectors = [
+      '#description ytd-text-inline-expander',
+      '#description #description-text',
+      '#description #content',
+      '#description',
+      '.ytd-text-inline-expander',
+      'ytd-expander[expanded] #content',
+      'ytd-expander #content',
+      '#meta-contents #description',
+      'meta[property="og:description"]',
+      'meta[name="description"]'
+    ];
+
+    for (const selector of descriptionSelectors) {
+      const element = document.querySelector(selector);
+      if (element) {
+        const text = element.matches('meta') ? 
+          element.content : 
+          element.textContent || element.innerText;
+        
+        if (text && text.trim()) {
+          videoDescription = text.trim();
+          console.log("[CS] Found description with selector:", selector);
+          break;
+        }
+      }
+    }
+
+    // Try to expand the description by clicking "Show more" if available
+    if (!videoDescription || videoDescription.length < 50) {
+      const showMoreButtons = [
+        '#expand',
+        '#description tp-yt-paper-button#expand',
+        '#description #expand',
+        '#more-button',
+        '.more-button',
+        'ytd-text-inline-expander tp-yt-paper-button',
+        'button.ytd-expander',
+        'ytd-expander #more'
+      ];
+      
+      for (const buttonSelector of showMoreButtons) {
+        const showMoreButton = document.querySelector(buttonSelector);
+        if (showMoreButton) {
+          try {
+            console.log("[CS] Found Show More button:", buttonSelector);
+            showMoreButton.click();
+            console.log("[CS] Clicked 'Show more' button");
+            
+            // Try again to get the expanded description
+            setTimeout(() => {
+              for (const selector of descriptionSelectors) {
+                const element = document.querySelector(selector);
+                if (element) {
+                  const text = element.matches('meta') ? 
+                    element.content : 
+                    element.textContent || element.innerText;
+                  
+                  if (text && text.trim() && text.length > videoDescription.length) {
+                    videoDescription = text.trim();
+                  }
+                }
+              }
+            }, 300);
+            
+            break;
+          } catch (e) {
+            console.log("[CS] Error clicking 'Show more' button:", e);
+          }
+        }
+      }
+    }
+
+    console.log("[CS] Extracted description length:", videoDescription?.length || 0);
+    
+    // Fallback: if we still can't get a description but have a title, create a minimal description
+    if ((!videoDescription || videoDescription.length === 0) && videoTitle) {
+      videoDescription = `Video: ${videoTitle}`;
+      console.log("[CS] Using fallback description");
+    }
+    
+  } catch (error) {
+    console.error("[CS] Error extracting video details:", error);
+    // Ensure we still return something
+    if (videoTitle && !videoDescription) {
+      videoDescription = `Video: ${videoTitle}`;
+    }
+  }
+  
+  return { 
+    videoTitle: videoTitle || "", 
+    videoDescription: videoDescription || "" 
+  };
+}
+
+// Set up message listener
+function setupMessageListener() {
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    console.log("[CS] Received message:", request);
+    
+    if (request.action === "extractVideoDetails") {
+      const details = extractVideoDetails();
+      sendResponse(details);
+    } else if (request.action === "showWarning") {
+      showWarningModal();
+      sendResponse({ status: "Warning modal process initiated by content script." });
+    } else {
+      sendResponse({status: "Message received by content script, no specific action or unhandled."});
+    }
+    
+    return true; // Keep channel open for async
+  });
+}
+
+// Get video player
 function getVideoPlayer() {
   return document.querySelector('video.html5-main-video');
 }
 
-// Function to pause the video
+// Pause video
 function pauseVideo() {
   const videoPlayer = getVideoPlayer();
   if (videoPlayer && !videoPlayer.paused) {
     videoPlayer.pause();
     console.log("[CS] Video paused.");
+  } else {
+    console.log("[CS] Video player not found or already paused.");
   }
 }
 
-// Function to extract video details
-function extractVideoDetails() {
-  let videoTitle = "";
-  let videoDescription = "";
-
-  const titleElement = document.querySelector('h1.style-scope.ytd-watch-metadata .ytd-video-primary-info-renderer, h1.title.ytd-video-primary-info-renderer, #video-title, #title h1 yt-formatted-string, meta[property="og:title"], meta[name="title"]');
-  if (titleElement) {
-    videoTitle = titleElement.matches('meta') ? titleElement.content : titleElement.innerText.trim();
+// Resume video
+function resumeVideo() {
+  const videoPlayer = getVideoPlayer();
+  if (videoPlayer && videoPlayer.paused) {
+    videoPlayer.play()
+      .then(() => console.log("[CS] Video resumed successfully."))
+      .catch(error => console.error("[CS] Error resuming video:", error));
+  } else {
+    console.log("[CS] Video player not found or already playing.");
   }
+}
 
-  const descriptionElement = document.querySelector('#description #content, #description-inline-expander .content, ytd-text-inline-expander.style-scope.ytd-video-secondary-info-renderer, #watch-description-text, meta[property="og:description"], meta[name="description"]');
-  if (descriptionElement) {
-    videoDescription = descriptionElement.matches('meta') ? descriptionElement.content : descriptionElement.innerText.trim();
+// Display a random quote
+function displayRandomQuote() {
+  if (typeof getRandomQuote !== 'function') {
+    console.error("[CS] getRandomQuote function not available");
+    return;
   }
   
-  console.log("[CS] Extracted Title:", videoTitle);
-  console.log("[CS] Extracted Description (preview):"); // Log only preview due to potential length
-  console.log(videoDescription.substring(0, 200) + (videoDescription.length > 200 ? "..." : ""));
-  return { videoTitle, videoDescription };
+  const quote = getRandomQuote();
+  const quoteTextElement = document.getElementById('quoteText');
+  const quoteAuthorElement = document.getElementById('quoteAuthor');
+  
+  if (quoteTextElement && quoteAuthorElement) {
+    quoteTextElement.textContent = `"${quote.text}"`;
+    quoteAuthorElement.textContent = `— ${quote.author}`;
+  }
 }
 
-// Function to inject and show the warning modal
+// Start countdown
+function startCountdown() {
+  const countdownElement = document.getElementById('countdown');
+  const continueButton = document.getElementById('focusGuardYes');
+  
+  if (!countdownElement || !continueButton) {
+    console.error("[CS] Countdown element or continue button not found");
+    return;
+  }
+  
+  countdownValue = 5;
+  countdownElement.textContent = countdownValue;
+  
+  // Disable the continue button initially
+  continueButton.classList.remove('active');
+  
+  continueButtonTimer = setInterval(() => {
+    countdownValue -= 1;
+    countdownElement.textContent = countdownValue;
+    
+    if (countdownValue <= 0) {
+      clearInterval(continueButtonTimer);
+      continueButton.classList.add('active');
+    }
+  }, 1000);
+}
+
+// Show warning modal
 async function showWarningModal() {
   console.log("[CS] showWarningModal called.");
-  pauseVideo(); // Pause the video when showing the warning
+  pauseVideo();
 
   if (!modalInjected) {
     console.log("[CS] Modal not injected yet. Fetching and injecting...");
     try {
       const modalUrl = chrome.runtime.getURL('warning_modal.html');
-      console.log("[CS] Fetching modal HTML from:", modalUrl);
       const response = await fetch(modalUrl);
       if (!response.ok) {
         console.error("[CS] Failed to fetch warning_modal.html:", response.status, response.statusText);
         return;
       }
       const modalHTML = await response.text();
-      
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = modalHTML;
       modalElement = tempDiv.firstChild;
@@ -73,18 +458,24 @@ async function showWarningModal() {
       if (yesButton) {
         yesButton.addEventListener('click', () => {
           console.log("[CS] 'Yes, Continue' clicked.");
+          if (continueButtonTimer) {
+            clearInterval(continueButtonTimer);
+          }
           if (modalElement) modalElement.style.display = 'none';
-          // Optionally, resume video here if desired, or let user do it manually
+          resumeVideo(); // Resume the video when user clicks continue
         });
       } else { console.error("[CS] Yes button not found in modal."); }
 
       if (noButton) {
         noButton.addEventListener('click', () => {
-          console.log("[CS] 'No, Close Video' clicked.");
+          console.log("[CS] 'No, Go Back' clicked.");
+          if (continueButtonTimer) {
+            clearInterval(continueButtonTimer);
+          }
           if (modalElement) modalElement.style.display = 'none';
-          chrome.runtime.sendMessage({ action: "closeTab" }, (response) => {
+          chrome.runtime.sendMessage({ action: "goBack" }, (res) => {
             if (chrome.runtime.lastError) {
-                console.error("[CS] Error sending closeTab message:", chrome.runtime.lastError.message);
+              console.error("[CS] Error sending goBack message:", chrome.runtime.lastError.message);
             }
           });
         });
@@ -98,34 +489,9 @@ async function showWarningModal() {
   if (modalElement) {
     console.log("[CS] Displaying modal.");
     modalElement.style.display = 'flex';
+    displayRandomQuote();
+    startCountdown();
   } else {
-    console.error("[CS] Modal element is null, cannot display.");
+    console.error("[CS] Modal element is null, cannot display after injection attempt.");
   }
-}
-
-// Listen for messages from the background script
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log("[CS] Message received:", request);
-  if (request.action === "extractVideoDetails") {
-    console.log("[CS] Action: extractVideoDetails");
-    const details = extractVideoDetails();
-    sendResponse(details);
-    return true; // Indicate async response if details extraction were async (though it's sync here)
-  }
-  if (request.action === "showWarning") {
-    console.log("[CS] Action: showWarning");
-    showWarningModal();
-    sendResponse({ status: "Warning modal process initiated." });
-    return true; // Indicate async response as showWarningModal is async
-  }
-  // Default response for unhandled actions or if not sending async response
-  sendResponse({ status: "Request received by content script, no specific action taken or response needed." });
-  return false; 
-});
-
-console.log("[CS] Event listeners set up.");
-
-// Initial check in case the content script loads after the background script already sent a message
-// (less common with manifest v3 but good for robustness with complex pages)
-// This isn't strictly necessary for the current flow but can be useful
-// chrome.runtime.sendMessage({ action: "contentScriptReady" }); 
+} 

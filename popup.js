@@ -8,10 +8,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const preferredKeywordsDiv = document.getElementById('preferredKeywords');
   const nonPreferredKeywordsDiv = document.getElementById('nonPreferredKeywords');
 
+  // Function to format keywords into HTML
+  function formatKeywords(keywords) {
+    if (!keywords || keywords.length === 0) {
+      return '<em>No keywords set</em>';
+    }
+    
+    return keywords.map(keyword => {
+      return `<span class="keyword-tag">${keyword}</span>`;
+    }).join(' ');
+  }
+
   // Load stored preferences and state
   chrome.storage.sync.get(['preferredContent', 'nonPreferredContent', 'warningsEnabled', 'extensionPaused'], (data) => {
-    preferredKeywordsDiv.textContent = data.preferredContent ? `Preferred: ${data.preferredContent.join(', ')}` : 'Not set';
-    nonPreferredKeywordsDiv.textContent = data.nonPreferredContent ? `Non-Preferred: ${data.nonPreferredContent.join(', ')}` : 'Not set';
+    // Format and display keywords
+    preferredKeywordsDiv.innerHTML = data.preferredContent ? 
+      formatKeywords(data.preferredContent) : 
+      '<em>No focus areas set</em>';
+    
+    nonPreferredKeywordsDiv.innerHTML = data.nonPreferredContent ? 
+      formatKeywords(data.nonPreferredContent) : 
+      '<em>No content to avoid set</em>';
+    
+    // Set checkbox states
     warningsEnabledCheckbox.checked = data.warningsEnabled !== undefined ? data.warningsEnabled : true;
     extensionPausedCheckbox.checked = data.extensionPaused || false;
   });

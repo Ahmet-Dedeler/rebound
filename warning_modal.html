@@ -1,7 +1,22 @@
 <div id="focusGuardModal" class="focus-guard-modal">
   <div class="focus-guard-modal-content">
-    <p>This content may not align with your focus areas. Do you still want to continue?</p>
-    <button id="focusGuardYes">Yes, Continue</button>
-    <button id="focusGuardNo">No, Close Video</button>
+    <div class="modal-header">
+      <h2>YouTube Focus Guard</h2>
+    </div>
+    
+    <div class="quote-container">
+      <p id="quoteText"></p>
+      <p id="quoteAuthor"></p>
+    </div>
+
+    <div class="warning-message">
+      <p>This content may not align with your focus areas.</p>
+      <p>Do you still want to continue?</p>
+    </div>
+    
+    <div class="button-container">
+      <button id="focusGuardYes">Yes, Continue (<span id="countdown">5</span>)</button>
+      <button id="focusGuardNo">No, Go Back</button>
+    </div>
   </div>
 </div> 

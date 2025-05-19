@@ -3,29 +3,58 @@
 <head>
   <title>YouTube Focus Guard</title>
   <link rel="stylesheet" type="text/css" href="popup.css">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
-  <h1>YouTube Focus Guard</h1>
-  
-  <div>
-    <h2>Current Preferences:</h2>
-    <div id="preferredKeywords"></div>
-    <div id="nonPreferredKeywords"></div>
-  </div>
+  <div class="popup-container">
+    <header>
+      <div class="logo-container">
+        <img src="images/icon48.png" alt="YouTube Focus Guard Logo" class="logo">
+        <h1>Focus Guard</h1>
+      </div>
+    </header>
+    
+    <div class="section">
+      <div class="toggle-container">
+        <div class="toggle-item">
+          <label class="toggle-switch">
+            <input type="checkbox" id="warningsEnabled">
+            <span class="slider round"></span>
+          </label>
+          <div class="toggle-label">
+            <span>Warning Messages</span>
+            <span class="toggle-description">Show warnings for non-preferred content</span>
+          </div>
+        </div>
+        
+        <div class="toggle-item">
+          <label class="toggle-switch">
+            <input type="checkbox" id="extensionPaused">
+            <span class="slider round"></span>
+          </label>
+          <div class="toggle-label">
+            <span>Pause Extension</span>
+            <span class="toggle-description">Temporarily disable all features</span>
+          </div>
+        </div>
+      </div>
+    </div>
 
-  <button id="updatePreferences">Update Preferences</button>
-
-  <div>
-    <label>
-      <input type="checkbox" id="warningsEnabled">
-      Enable Warnings
-    </label>
-  </div>
-  <div>
-    <label>
-      <input type="checkbox" id="extensionPaused">
-      Pause Extension
-    </label>
+    <div class="section">
+      <h2>Your Focus Areas</h2>
+      <div class="keyword-container">
+        <div id="preferredKeywords" class="keyword-list"></div>
+      </div>
+      
+      <h2>Content to Avoid</h2>
+      <div class="keyword-container">
+        <div id="nonPreferredKeywords" class="keyword-list"></div>
+      </div>
+    </div>
+    
+    <div class="button-container">
+      <button id="updatePreferences" class="primary-button">Update Preferences</button>
+    </div>
   </div>
 
   <script src="popup.js"></script>
