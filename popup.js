@@ -16,11 +16,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const warningsEnabledCheckbox = document.getElementById('warningsEnabled');
   const preferredKeywordsDiv = document.getElementById('preferredKeywords');
   const nonPreferredKeywordsDiv = document.getElementById('nonPreferredKeywords');
-  const darkModeToggle = document.getElementById('darkModeToggle');
   const powerButton = document.getElementById('powerButton');
   const mainContent = document.getElementById('mainContent');
   const offScreen = document.getElementById('offScreen');
-  const htmlElement = document.documentElement;
 
   // Function to format keywords into HTML
   function formatKeywords(keywords) {
@@ -31,16 +29,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return keywords.map(keyword => {
       return `<span class="keyword-tag">${keyword}</span>`;
     }).join(' ');
-  }
-
-  // Function to toggle dark mode
-  function toggleDarkMode() {
-    const isDarkMode = htmlElement.getAttribute('data-theme') === 'dark';
-    const newMode = isDarkMode ? 'light' : 'dark';
-    
-    htmlElement.setAttribute('data-theme', newMode);
-    chrome.storage.sync.set({ darkMode: !isDarkMode });
-    debugLog(`Dark mode ${isDarkMode ? 'disabled' : 'enabled'}`);
   }
 
   // Function to toggle extension on/off
@@ -63,7 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Load stored preferences and state
-  chrome.storage.sync.get(['preferredContent', 'nonPreferredContent', 'warningsEnabled', 'extensionPaused', 'darkMode'], (data) => {
+  chrome.storage.sync.get(['preferredContent', 'nonPreferredContent', 'warningsEnabled', 'extensionPaused'], (data) => {
     // Format and display keywords
     preferredKeywordsDiv.innerHTML = data.preferredContent ? 
       formatKeywords(data.preferredContent) : 
@@ -75,11 +63,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Set checkbox states
     warningsEnabledCheckbox.checked = data.warningsEnabled !== undefined ? data.warningsEnabled : true;
-    
-    // Set dark mode state
-    if (data.darkMode) {
-      htmlElement.setAttribute('data-theme', 'dark');
-    }
     
     // Set extension state (on/off)
     if (data.extensionPaused) {
@@ -105,11 +88,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Event listener for dark mode toggle
-  if (darkModeToggle) {
-    darkModeToggle.addEventListener('click', toggleDarkMode);
-  }
-
   // Event listener for power button (toggle on/off)
   if (powerButton) {
     powerButton.addEventListener('click', toggleExtensionState);
@@ -122,12 +100,4 @@ document.addEventListener('DOMContentLoaded', () => {
       centerPowerIcon.addEventListener('click', toggleExtensionState);
     }
   }
-  
-  // Listen for storage changes to sync dark mode with options page
-  chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === 'sync' && changes.darkMode && changes.darkMode.newValue !== undefined) {
-      const newDarkMode = changes.darkMode.newValue;
-      htmlElement.setAttribute('data-theme', newDarkMode ? 'dark' : 'light');
-    }
-  });
 }); 

@@ -43,11 +43,11 @@ function initialize() {
   // Set up navigation detection once the document is ready
   setupNavigationDetection();
   
-  // Set up an interval to check the current page regularly as a fallback
-  setInterval(checkCurrentPage, 1000);
+  // Instead of constant polling, use an adaptive check mechanism
+  setupAdaptiveChecking();
 }
 
-// Set up detection for YouTube SPA navigation
+// Set up detection for YouTube SPA navigation - optimized version
 function setupNavigationDetection() {
   if (navigationObserverSet) return;
   
@@ -74,23 +74,67 @@ function setupNavigationDetection() {
       setTimeout(checkCurrentPage, 500);
     });
     
-    // Method 2: Watch for body mutations as a fallback
+    // Method 2: Target specific YouTube elements instead of the entire body
+    // This is more efficient than watching the entire document
     if (document.body) {
-      const bodyObserver = new MutationObserver((mutations) => {
-        // Only check if something substantial changed
-        if (mutations.some(m => m.addedNodes.length > 0 || m.removedNodes.length > 0)) {
-          checkCurrentPage();
+      // Watch for the YouTube content area changes (more targeted)
+      const contentObserver = new MutationObserver(() => {
+        checkCurrentPage();
+      });
+      
+      // Find YouTube's main content container and observe it if available
+      const targetNode = document.querySelector('#content, #page-manager, ytd-watch-flexy');
+      if (targetNode) {
+        contentObserver.observe(targetNode, {
+          childList: true,
+          subtree: false // Don't need deep subtree watching
+        });
+        debugLog("[CS] YouTube content observer set up");
+      } else {
+        // Fallback to body observation with throttling
+        const bodyObserver = new MutationObserver((mutations) => {
+          // Throttle calls by checking if important nodes were modified
+          if (mutations.some(m => m.addedNodes.length > 0 && 
+              Array.from(m.addedNodes).some(node => 
+                node.nodeName === 'YTD-WATCH-FLEXY' || 
+                (node.id && (node.id === 'content' || node.id === 'page-manager'))
+              ))) {
+            checkCurrentPage();
+          }
+        });
+        
+        bodyObserver.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: false,
+          characterData: false
+        });
+        
+        debugLog("[CS] Fallback body observer set up");
+      }
+      
+      // Method 3: Use the PerformanceObserver API to detect navigation
+      if (PerformanceObserver) {
+        try {
+          const navigationObserver = new PerformanceObserver((entries) => {
+            for (const entry of entries.getEntries()) {
+              if (entry.entryType === 'navigation' || entry.name.includes('youtube.com')) {
+                debugLog("[CS] Navigation performance event detected");
+                setTimeout(checkCurrentPage, 500);
+              }
+            }
+          });
+          
+          navigationObserver.observe({ 
+            entryTypes: ['navigation', 'resource'],
+            buffered: true
+          });
+          
+          debugLog("[CS] Performance observer set up");
+        } catch (err) {
+          debugLog("[CS] Performance observer setup failed:", err);
         }
-      });
-      
-      bodyObserver.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: false,
-        characterData: false
-      });
-      
-      debugLog("[CS] Body mutation observer set up");
+      }
     } else {
       // If body isn't ready yet, try again after a delay
       debugLog("[CS] Body not available yet, will retry navigation detection setup");
@@ -103,6 +147,74 @@ function setupNavigationDetection() {
   } catch (error) {
     console.error("[CS] Error setting up navigation detection:", error);
   }
+}
+
+// Set up adaptive checking mechanism - only poll when needed and at lower frequency
+function setupAdaptiveChecking() {
+  let inactivityCounter = 0;
+  let checkInterval = null;
+  let lastUrl = window.location.href;
+  
+  // Check if user is interacting with the page
+  document.addEventListener('click', resetInactivity);
+  document.addEventListener('scroll', resetInactivity);
+  document.addEventListener('keypress', resetInactivity);
+  
+  function resetInactivity() {
+    inactivityCounter = 0;
+    
+    // If we don't have an interval running, start one at a moderate pace
+    if (!checkInterval) {
+      debugLog("[CS] Starting adaptive checking due to user activity");
+      checkInterval = setInterval(adaptiveCheck, 3000); // 3 seconds is much better than 1
+    }
+  }
+  
+  function adaptiveCheck() {
+    const currentUrl = window.location.href;
+    
+    // Check for URL changes
+    if (currentUrl !== lastUrl) {
+      lastUrl = currentUrl;
+      checkCurrentPage();
+      inactivityCounter = 0;
+      return;
+    }
+    
+    // Increment inactivity and potentially stop checking
+    inactivityCounter++;
+    
+    // If inactive for over 30 seconds (10 checks * 3s), slow down checking
+    if (inactivityCounter > 10) {
+      if (checkInterval) {
+        debugLog("[CS] Reducing check frequency due to inactivity");
+        clearInterval(checkInterval);
+        
+        // Switch to a much slower interval when user is inactive
+        checkInterval = setInterval(adaptiveCheck, 10000); // 10 seconds
+      }
+    }
+    
+    // If inactive for over 2 minutes, stop polling completely
+    if (inactivityCounter > 24) { // (10 checks * 3s) + (14 checks * 10s) ≈ 2 minutes
+      debugLog("[CS] Stopping automatic checking due to extended inactivity");
+      clearInterval(checkInterval);
+      checkInterval = null;
+    }
+    
+    // Still do a check, even when slowing down
+    checkCurrentPage();
+  }
+  
+  // Start with a single initial check
+  setTimeout(() => {
+    checkCurrentPage();
+    
+    // Start adaptive checking only if we're on a video page
+    if (isVideoPage) {
+      resetInactivity();
+    }
+  }, 1500);
 }
 
 // Check if we're on a YouTube video page
@@ -377,8 +489,8 @@ function showErrorMessage(message) {
   errorElement.style.top = '10px';
   errorElement.style.right = '10px';
   errorElement.style.zIndex = '9999';
-  errorElement.style.backgroundColor = '#f44336';
-  errorElement.style.color = 'white';
+  errorElement.style.backgroundColor = 'var(--toast-bg, #f44336)';
+  errorElement.style.color = 'var(--toast-text, #fff)';
   errorElement.style.padding = '12px 20px';
   errorElement.style.borderRadius = '4px';
   errorElement.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
@@ -405,11 +517,21 @@ function showErrorMessage(message) {
     }
   }, 5000);
   
-  // Add CSS for animations
+  // Add CSS for animations and system theme
   if (!document.querySelector('#focus-guard-error-styles')) {
     const styleElement = document.createElement('style');
     styleElement.id = 'focus-guard-error-styles';
     styleElement.textContent = `
+      .focus-guard-error {
+        --toast-bg: #f44336;
+        --toast-text: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        .focus-guard-error {
+          --toast-bg: #222;
+          --toast-text: #fff;
+        }
+      }
       @keyframes fadeIn {
         from { opacity: 0; transform: translateY(-20px); }
         to { opacity: 1; transform: translateY(0); }
@@ -584,7 +706,7 @@ async function showWarningModal() {
 
       if (yesButton) {
         yesButton.addEventListener('click', () => {
-          debugLog("[CS] 'Yes, Continue' clicked.");
+          debugLog("[CS] 'Continue' clicked.");
           closeWarningModal();
           resumeVideo(); // Resume the video when user clicks continue
         });

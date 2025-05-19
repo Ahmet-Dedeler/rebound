@@ -1,3 +1,35 @@
+:root {
+  --modal-bg: #fff;
+  --modal-text: #222;
+  --modal-header-bg: #fff;
+  --modal-header-text: #222;
+  --button-green: #4CAF50;
+  --button-green-hover: #388e3c;
+  --button-red: #f44336;
+  --button-red-hover: #c62828;
+  --button-disabled: #e0e0e0;
+  --button-disabled-text: #888;
+  --modal-border: #e0e0e0;
+  --modal-shadow: 0 8px 24px rgba(0,0,0,0.2);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --modal-bg: #23272e;
+    --modal-text: #f5f5f5;
+    --modal-header-bg: #23272e;
+    --modal-header-text: #f5f5f5;
+    --button-green: #388e3c;
+    --button-green-hover: #4CAF50;
+    --button-red: #c62828;
+    --button-red-hover: #f44336;
+    --button-disabled: #444;
+    --button-disabled-text: #aaa;
+    --modal-border: #444;
+    --modal-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+}
+
 .focus-guard-modal {
   display: none; /* Hidden by default */
   position: fixed; 
@@ -14,18 +46,20 @@
 }
 
 .focus-guard-modal-content {
-  background-color: #ffffff;
+  background-color: var(--modal-bg);
+  color: var(--modal-text);
   margin: auto;
   padding: 0;
   width: 90%;
   max-width: 500px;
   text-align: center;
   border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+  box-shadow: var(--modal-shadow);
   overflow: hidden;
   animation: modalFadeIn 0.3s ease-out;
   transform: translateY(0);
   outline: none; /* Remove default focus outline when modal gets focus */
+  border: 1px solid var(--modal-border);
 }
 
 @keyframes modalFadeIn {
@@ -40,8 +74,8 @@
 }
 
 .modal-header {
-  background-color: #4CAF50;
-  color: white;
+  background-color: var(--modal-header-bg);
+  color: var(--modal-header-text);
   padding: 15px 20px;
   position: relative;
 }
@@ -59,10 +93,17 @@
   border-bottom: 1px solid #e0e0e0;
 }
 
+@media (prefers-color-scheme: dark) {
+  .quote-container {
+    background-color: #23272e;
+    border-bottom: 1px solid #444;
+  }
+}
+
 #quoteText {
   font-size: 18px;
   margin-bottom: 10px;
-  color: #424242;
+  color: var(--modal-text);
   line-height: 1.4;
 }
 
@@ -75,7 +116,7 @@
 
 .warning-message {
   padding: 25px 20px;
-  color: #333;
+  color: var(--modal-text);
 }
 
 .warning-message p {
@@ -100,24 +141,19 @@
   transition: all 0.2s ease;
   border: none;
   min-width: 150px;
-}
-
-/* Add focus styles for accessibility */
-.button-container button:focus {
-  outline: 3px solid #4CAF50;
-  outline-offset: 2px;
+  outline: none;
 }
 
 #focusGuardYes {
-  background-color: #e0e0e0;
-  color: #424242;
+  background-color: var(--button-red);
+  color: #fff;
   pointer-events: none; /* Disabled initially */
   opacity: 0.7;
 }
 
 #focusGuardYes[aria-disabled="true"] {
-  background-color: #e0e0e0;
-  color: #424242;
+  background-color: var(--button-disabled);
+  color: var(--button-disabled-text);
   pointer-events: none;
   opacity: 0.7;
   cursor: not-allowed;
@@ -125,8 +161,8 @@
 
 #focusGuardYes.active,
 #focusGuardYes[aria-disabled="false"] {
-  background-color: #4CAF50;
-  color: white;
+  background-color: var(--button-red);
+  color: #fff;
   pointer-events: auto;
   opacity: 1;
   cursor: pointer;
@@ -134,15 +170,21 @@
 
 #focusGuardYes:hover.active,
 #focusGuardYes[aria-disabled="false"]:hover {
-  background-color: #43a047;
+  background-color: var(--button-red-hover);
 }
 
 #focusGuardNo {
-  background-color: #f44336;
-  color: white;
+  background-color: var(--button-green);
+  color: #fff;
 }
 
 #focusGuardNo:hover {
-  background-color: #e53935;
+  background-color: var(--button-green-hover);
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.button-container button:focus {
+  outline: 2px solid #888;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px #88833a33;
 } 

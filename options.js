@@ -18,8 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const nonPreferredTagsContainer = document.getElementById('nonPreferredTags');
   const addPreferredButton = document.getElementById('addPreferredButton');
   const addNonPreferredButton = document.getElementById('addNonPreferredButton');
-  const darkModeToggle = document.getElementById('darkModeToggle');
-  const htmlElement = document.documentElement;
+  // No darkModeToggle, no htmlElement
   
   // State variables
   let preferredTags = [];
@@ -115,21 +114,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
   
-  // Function to toggle dark mode
-  function toggleDarkMode() {
-    const isDarkMode = htmlElement.getAttribute('data-theme') === 'dark';
-    htmlElement.setAttribute('data-theme', isDarkMode ? 'light' : 'dark');
-    chrome.storage.sync.set({ darkMode: !isDarkMode });
-    debugLog(`Dark mode ${isDarkMode ? 'disabled' : 'enabled'}`);
-  }
-  
   // Load stored preferences
-  chrome.storage.sync.get(['preferredContent', 'nonPreferredContent', 'darkMode'], (data) => {
-    // Set dark mode
-    if (data.darkMode) {
-      htmlElement.setAttribute('data-theme', 'dark');
-    }
-    
+  chrome.storage.sync.get(['preferredContent', 'nonPreferredContent'], (data) => {
     // Load tags
     if (data.preferredContent && Array.isArray(data.preferredContent)) {
       preferredTags = [...data.preferredContent];
@@ -176,18 +162,5 @@ document.addEventListener('DOMContentLoaded', () => {
     addNonPreferredButton.addEventListener('click', () => {
       addTag(nonPreferredContentInput.value, 'nonPreferred');
     });
-  }
-  
-  // Event listener for dark mode toggle
-  if (darkModeToggle) {
-    darkModeToggle.addEventListener('click', toggleDarkMode);
-  }
-});
-
-// Listen for storage changes to sync dark mode with popup
-chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'sync' && changes.darkMode && changes.darkMode.newValue !== undefined) {
-    const newDarkMode = changes.darkMode.newValue;
-    htmlElement.setAttribute('data-theme', newDarkMode ? 'dark' : 'light');
   }
 }); 
