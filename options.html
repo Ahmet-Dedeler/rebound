@@ -1,47 +1,69 @@
 <!DOCTYPE html>
-<html>
+<html lang="en" data-theme="light">
 <head>
-  <title>YouTube Focus Guard - Setup</title>
+  <title>Rebound - Setup</title>
   <link rel="stylesheet" type="text/css" href="options.css">
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
   <div class="container">
     <header>
       <div class="logo-container">
-        <img src="images/icon48.png" alt="YouTube Focus Guard Logo" class="logo">
-        <h1>YouTube Focus Guard</h1>
+        <img src="images/icon48.png" alt="Rebound Logo" class="logo">
+        <h1>Rebound</h1>
       </div>
-      <p class="subtitle">Configure your preferences to avoid procrastination</p>
+      <div class="header-controls">
+        <button id="darkModeToggle" class="icon-button" aria-label="Toggle dark mode">
+          <i class="fas fa-sun" id="lightModeIcon"></i>
+          <i class="fas fa-moon" id="darkModeIcon"></i>
+        </button>
+      </div>
+      <p class="subtitle">Choose what content you want to focus on and avoid</p>
     </header>
 
     <div class="setup-section">
-      <h2>What kind of content would you like to see more of?</h2>
-      <p class="hint">These keywords will help us identify content that aligns with your interests and goals.</p>
+      <h2><i class="fas fa-check-circle positive-icon"></i> I want to see</h2>
+      <p class="hint">Add topics and content types that help you stay productive.</p>
       <div class="input-container">
-        <textarea id="preferredContent" rows="4" placeholder="e.g., coding, education, learning, programming, tutorials..."></textarea>
-        <p class="tip">Separate keywords with commas. Be specific about topics that help you stay productive.</p>
+        <div class="tag-input-container">
+          <div class="input-with-button">
+            <input type="text" id="preferredContentInput" placeholder="Add a topic and press Enter">
+            <button id="addPreferredButton" class="add-button" aria-label="Add topic">
+              <i class="fas fa-plus"></i>
+            </button>
+          </div>
+          <div id="preferredTags" class="tags-container positive"></div>
+        </div>
+        <p class="tip">Try: coding, math, educational content, tutorials, documentaries...</p>
       </div>
     </div>
 
     <div class="setup-section">
-      <h2>What content would you like to avoid?</h2>
-      <p class="hint">These keywords will help us identify distracting content you want to limit.</p>
+      <h2><i class="fas fa-times-circle negative-icon"></i> I don't want to see</h2>
+      <p class="hint">Add topics and content types that tend to distract you.</p>
       <div class="input-container">
-        <textarea id="nonPreferredContent" rows="4" placeholder="e.g., gaming, memes, vlogs, pranks, challenge videos..."></textarea>
-        <p class="tip">Separate keywords with commas. Consider what type of videos usually distract you.</p>
+        <div class="tag-input-container">
+          <div class="input-with-button">
+            <input type="text" id="nonPreferredContentInput" placeholder="Add a topic and press Enter">
+            <button id="addNonPreferredButton" class="add-button" aria-label="Add topic">
+              <i class="fas fa-plus"></i>
+            </button>
+          </div>
+          <div id="nonPreferredTags" class="tags-container negative"></div>
+        </div>
+        <p class="tip">Try: gaming, memes, vlogs, podcasts, pranks, unboxing, challenge videos...</p>
       </div>
     </div>
-
-    <div class="button-container">
-      <button id="savePreferences" class="primary-button">Save Preferences</button>
-    </div>
-
-    <div id="statusMessage" class="status-message"></div>
   </div>
 
   <footer>
-    <p>YouTube Focus Guard helps you stay focused while using YouTube.</p>
+    <div class="attribution">
+      Made by <a href="https://ahmetdedeler.com" target="_blank">Ahmet</a> | 
+      <a href="https://github.com/Ahmet-Dedeler/rebound" target="_blank">
+        <i class="fab fa-github"></i> GitHub
+      </a>
+    </div>
   </footer>
 
   <script src="options.js"></script>

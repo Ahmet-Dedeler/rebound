@@ -1,5 +1,15 @@
 // Content script for YouTube Focus Guard v9
-console.log("[CS] Content script loading with improved SPA support. v9");
+// Set to false in production builds
+const DEBUG = false;
+
+// Logging function that only logs in debug mode
+function debugLog(...args) {
+  if (DEBUG) {
+    console.log(...args);
+  }
+}
+
+debugLog("[CS] Content script loading with improved SPA support. v9");
 
 // State variables
 let isVideoPage = false;
@@ -11,6 +21,7 @@ let continueButtonTimer = null;
 let countdownValue = 5;
 let processingInProgress = false;
 let navigationObserverSet = false;
+let previousActiveElement = null;
 
 // Initialize when DOM is ready or immediately if already loaded
 if (document.readyState === 'loading') {
@@ -21,7 +32,7 @@ if (document.readyState === 'loading') {
 
 // Wait for YouTube to be ready (it's a complex SPA)
 function initialize() {
-  console.log("[CS] Initializing content script");
+  debugLog("[CS] Initializing content script");
   
   // Check current page once on initialization
   checkCurrentPage();
@@ -47,19 +58,19 @@ function setupNavigationDetection() {
     
     history.pushState = function() {
       pushState.apply(history, arguments);
-      console.log("[CS] pushState detected, checking page");
+      debugLog("[CS] pushState detected, checking page");
       setTimeout(checkCurrentPage, 500);
     };
     
     history.replaceState = function() {
       replaceState.apply(history, arguments);
-      console.log("[CS] replaceState detected, checking page");
+      debugLog("[CS] replaceState detected, checking page");
       setTimeout(checkCurrentPage, 500);
     };
     
     // Listen for popstate events (browser back/forward)
     window.addEventListener('popstate', () => {
-      console.log("[CS] popstate detected, checking page");
+      debugLog("[CS] popstate detected, checking page");
       setTimeout(checkCurrentPage, 500);
     });
     
@@ -79,16 +90,16 @@ function setupNavigationDetection() {
         characterData: false
       });
       
-      console.log("[CS] Body mutation observer set up");
+      debugLog("[CS] Body mutation observer set up");
     } else {
       // If body isn't ready yet, try again after a delay
-      console.log("[CS] Body not available yet, will retry navigation detection setup");
+      debugLog("[CS] Body not available yet, will retry navigation detection setup");
       setTimeout(setupNavigationDetection, 1000);
       return;
     }
     
     navigationObserverSet = true;
-    console.log("[CS] Navigation detection set up successfully");
+    debugLog("[CS] Navigation detection set up successfully");
   } catch (error) {
     console.error("[CS] Error setting up navigation detection:", error);
   }
@@ -105,7 +116,7 @@ function checkCurrentPage() {
     
     // If not already processing this video
     if (onVideoPage && (!isVideoPage || videoId !== currentVideoId)) {
-      console.log(`[CS] Detected new video: ${url} (ID: ${videoId}, previous: ${currentVideoId})`);
+      debugLog(`[CS] Detected new video: ${url} (ID: ${videoId}, previous: ${currentVideoId})`);
       
       isVideoPage = true;
       currentVideoId = videoId;
@@ -116,7 +127,7 @@ function checkCurrentPage() {
     } 
     // If we've navigated away from a video page
     else if (!onVideoPage && isVideoPage) {
-      console.log("[CS] Left video page");
+      debugLog("[CS] Left video page");
       isVideoPage = false;
       currentVideoId = null;
       videoDetailsExtracted = false;
@@ -132,11 +143,11 @@ function processVideoPage() {
   
   try {
     processingInProgress = true;
-    console.log("[CS] Processing video page");
+    debugLog("[CS] Processing video page");
     
     // Make sure YouTube page is fully loaded before extraction
     if (document.readyState !== 'complete') {
-      console.log("[CS] Page not fully loaded, delaying extraction");
+      debugLog("[CS] Page not fully loaded, delaying extraction");
       setTimeout(() => {
         processingInProgress = false;
         processVideoPage();
@@ -149,9 +160,9 @@ function processVideoPage() {
     
     // Only send if we have a title
     if (details.videoTitle) {
-      console.log("[CS] Sending video details to background script");
-      console.log("[CS] Title:", details.videoTitle);
-      console.log("[CS] Description:", details.videoDescription || "(No description)");
+      debugLog("[CS] Sending video details to background script");
+      debugLog("[CS] Title:", details.videoTitle);
+      debugLog("[CS] Description:", details.videoDescription || "(No description)");
       
       // Ensure videoDescription is never undefined (server rejects undefined values)
       const videoDescription = details.videoDescription || "";
@@ -164,7 +175,7 @@ function processVideoPage() {
         if (chrome.runtime.lastError) {
           console.error("[CS] Error sending video details:", chrome.runtime.lastError);
         } else {
-          console.log("[CS] Background script response:", response);
+          debugLog("[CS] Background script response:", response);
         }
         processingInProgress = false;
       });
@@ -172,7 +183,7 @@ function processVideoPage() {
       videoDetailsExtracted = true;
     } else {
       // If extraction failed, retry after a delay
-      console.log("[CS] Video details extraction failed, retrying in 2 seconds");
+      debugLog("[CS] Video details extraction failed, retrying in 2 seconds");
       setTimeout(() => {
         processingInProgress = false;
         processVideoPage();
@@ -237,7 +248,7 @@ function extractVideoDetails() {
       }
     }
 
-    console.log("[CS] Extracted title:", videoTitle);
+    debugLog("[CS] Extracted title:", videoTitle);
     
     // Try to get the description - multiple approaches
     const descriptionSelectors = [
@@ -262,7 +273,7 @@ function extractVideoDetails() {
         
         if (text && text.trim()) {
           videoDescription = text.trim();
-          console.log("[CS] Found description with selector:", selector);
+          debugLog("[CS] Found description with selector:", selector);
           break;
         }
       }
@@ -285,9 +296,9 @@ function extractVideoDetails() {
         const showMoreButton = document.querySelector(buttonSelector);
         if (showMoreButton) {
           try {
-            console.log("[CS] Found Show More button:", buttonSelector);
+            debugLog("[CS] Found Show More button:", buttonSelector);
             showMoreButton.click();
-            console.log("[CS] Clicked 'Show more' button");
+            debugLog("[CS] Clicked 'Show more' button");
             
             // Try again to get the expanded description
             setTimeout(() => {
@@ -307,18 +318,18 @@ function extractVideoDetails() {
             
             break;
           } catch (e) {
-            console.log("[CS] Error clicking 'Show more' button:", e);
+            debugLog("[CS] Error clicking 'Show more' button:", e);
           }
         }
       }
     }
 
-    console.log("[CS] Extracted description length:", videoDescription?.length || 0);
+    debugLog("[CS] Extracted description length:", videoDescription?.length || 0);
     
     // Fallback: if we still can't get a description but have a title, create a minimal description
     if ((!videoDescription || videoDescription.length === 0) && videoTitle) {
       videoDescription = `Video: ${videoTitle}`;
-      console.log("[CS] Using fallback description");
+      debugLog("[CS] Using fallback description");
     }
     
   } catch (error) {
@@ -338,7 +349,7 @@ function extractVideoDetails() {
 // Set up message listener
 function setupMessageListener() {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    console.log("[CS] Received message:", request);
+    debugLog("[CS] Received message:", request);
     
     if (request.action === "extractVideoDetails") {
       const details = extractVideoDetails();
@@ -346,12 +357,70 @@ function setupMessageListener() {
     } else if (request.action === "showWarning") {
       showWarningModal();
       sendResponse({ status: "Warning modal process initiated by content script." });
+    } else if (request.action === "showError") {
+      showErrorMessage(request.errorMessage || "Unable to analyze video content");
+      sendResponse({ status: "Error message displayed." });
     } else {
       sendResponse({status: "Message received by content script, no specific action or unhandled."});
     }
     
     return true; // Keep channel open for async
   });
+}
+
+// Display error message to the user
+function showErrorMessage(message) {
+  // Create a temporary error message element
+  const errorElement = document.createElement('div');
+  errorElement.className = 'focus-guard-error';
+  errorElement.style.position = 'fixed';
+  errorElement.style.top = '10px';
+  errorElement.style.right = '10px';
+  errorElement.style.zIndex = '9999';
+  errorElement.style.backgroundColor = '#f44336';
+  errorElement.style.color = 'white';
+  errorElement.style.padding = '12px 20px';
+  errorElement.style.borderRadius = '4px';
+  errorElement.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+  errorElement.style.fontSize = '14px';
+  errorElement.style.maxWidth = '400px';
+  errorElement.style.animation = 'fadeIn 0.3s ease-out';
+  
+  errorElement.textContent = `Rebound: ${message}`;
+  
+  // Add it to the page
+  document.body.appendChild(errorElement);
+  
+  // Remove after 5 seconds
+  setTimeout(() => {
+    if (errorElement.parentNode === document.body) {
+      errorElement.style.animation = 'fadeOut 0.3s ease-out';
+      
+      // Remove after animation completes
+      setTimeout(() => {
+        if (errorElement.parentNode === document.body) {
+          document.body.removeChild(errorElement);
+        }
+      }, 300);
+    }
+  }, 5000);
+  
+  // Add CSS for animations
+  if (!document.querySelector('#focus-guard-error-styles')) {
+    const styleElement = document.createElement('style');
+    styleElement.id = 'focus-guard-error-styles';
+    styleElement.textContent = `
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-20px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes fadeOut {
+        from { opacity: 1; transform: translateY(0); }
+        to { opacity: 0; transform: translateY(-20px); }
+      }
+    `;
+    document.head.appendChild(styleElement);
+  }
 }
 
 // Get video player
@@ -364,9 +433,9 @@ function pauseVideo() {
   const videoPlayer = getVideoPlayer();
   if (videoPlayer && !videoPlayer.paused) {
     videoPlayer.pause();
-    console.log("[CS] Video paused.");
+    debugLog("[CS] Video paused.");
   } else {
-    console.log("[CS] Video player not found or already paused.");
+    debugLog("[CS] Video player not found or already paused.");
   }
 }
 
@@ -375,10 +444,10 @@ function resumeVideo() {
   const videoPlayer = getVideoPlayer();
   if (videoPlayer && videoPlayer.paused) {
     videoPlayer.play()
-      .then(() => console.log("[CS] Video resumed successfully."))
+      .then(() => debugLog("[CS] Video resumed successfully."))
       .catch(error => console.error("[CS] Error resuming video:", error));
   } else {
-    console.log("[CS] Video player not found or already playing.");
+    debugLog("[CS] Video player not found or already playing.");
   }
 }
 
@@ -414,6 +483,7 @@ function startCountdown() {
   
   // Disable the continue button initially
   continueButton.classList.remove('active');
+  continueButton.setAttribute('aria-disabled', 'true');
   
   continueButtonTimer = setInterval(() => {
     countdownValue -= 1;
@@ -422,17 +492,74 @@ function startCountdown() {
     if (countdownValue <= 0) {
       clearInterval(continueButtonTimer);
       continueButton.classList.add('active');
+      continueButton.setAttribute('aria-disabled', 'false');
     }
   }, 1000);
 }
 
+// Handle keyboard navigation inside modal - trap focus
+function handleModalKeydown(event) {
+  // If Escape pressed, close the modal
+  if (event.key === 'Escape') {
+    closeWarningModal();
+    event.preventDefault();
+    return;
+  }
+  
+  // Only trap focus if Tab key is pressed
+  if (event.key !== 'Tab') return;
+  
+  // Get all focusable elements in the modal
+  const focusableElements = modalElement.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  );
+  
+  if (focusableElements.length === 0) return;
+  
+  const firstElement = focusableElements[0];
+  const lastElement = focusableElements[focusableElements.length - 1];
+  
+  // If shift+tab pressed and first element is active, move to last element
+  if (event.shiftKey && document.activeElement === firstElement) {
+    lastElement.focus();
+    event.preventDefault();
+  } 
+  // If tab pressed and last element is active, move to first element
+  else if (!event.shiftKey && document.activeElement === lastElement) {
+    firstElement.focus();
+    event.preventDefault();
+  }
+}
+
+// Close the warning modal
+function closeWarningModal() {
+  if (modalElement) {
+    modalElement.style.display = 'none';
+    
+    // Remove the keydown event listener
+    modalElement.removeEventListener('keydown', handleModalKeydown);
+    
+    // Restore focus to previous element
+    if (previousActiveElement) {
+      previousActiveElement.focus();
+    }
+  }
+  
+  if (continueButtonTimer) {
+    clearInterval(continueButtonTimer);
+  }
+}
+
 // Show warning modal
 async function showWarningModal() {
-  console.log("[CS] showWarningModal called.");
+  debugLog("[CS] showWarningModal called.");
   pauseVideo();
 
+  // Store the current active element to restore focus later
+  previousActiveElement = document.activeElement;
+
   if (!modalInjected) {
-    console.log("[CS] Modal not injected yet. Fetching and injecting...");
+    debugLog("[CS] Modal not injected yet. Fetching and injecting...");
     try {
       const modalUrl = chrome.runtime.getURL('warning_modal.html');
       const response = await fetch(modalUrl);
@@ -450,29 +577,23 @@ async function showWarningModal() {
       }
       document.body.appendChild(modalElement);
       modalInjected = true;
-      console.log("[CS] Modal injected.");
+      debugLog("[CS] Modal injected.");
 
       const yesButton = modalElement.querySelector('#focusGuardYes');
       const noButton = modalElement.querySelector('#focusGuardNo');
 
       if (yesButton) {
         yesButton.addEventListener('click', () => {
-          console.log("[CS] 'Yes, Continue' clicked.");
-          if (continueButtonTimer) {
-            clearInterval(continueButtonTimer);
-          }
-          if (modalElement) modalElement.style.display = 'none';
+          debugLog("[CS] 'Yes, Continue' clicked.");
+          closeWarningModal();
           resumeVideo(); // Resume the video when user clicks continue
         });
       } else { console.error("[CS] Yes button not found in modal."); }
 
       if (noButton) {
         noButton.addEventListener('click', () => {
-          console.log("[CS] 'No, Go Back' clicked.");
-          if (continueButtonTimer) {
-            clearInterval(continueButtonTimer);
-          }
-          if (modalElement) modalElement.style.display = 'none';
+          debugLog("[CS] 'No, Go Back' clicked.");
+          closeWarningModal();
           chrome.runtime.sendMessage({ action: "goBack" }, (res) => {
             if (chrome.runtime.lastError) {
               console.error("[CS] Error sending goBack message:", chrome.runtime.lastError.message);
@@ -487,10 +608,24 @@ async function showWarningModal() {
     }
   }
   if (modalElement) {
-    console.log("[CS] Displaying modal.");
+    debugLog("[CS] Displaying modal.");
     modalElement.style.display = 'flex';
+    
+    // Set up focus trap
+    modalElement.addEventListener('keydown', handleModalKeydown);
+    
     displayRandomQuote();
     startCountdown();
+    
+    // Focus on the "No, Go Back" button or the modal itself if button not found
+    setTimeout(() => {
+      const noButton = modalElement.querySelector('#focusGuardNo');
+      if (noButton) {
+        noButton.focus();
+      } else {
+        modalElement.focus();
+      }
+    }, 50);
   } else {
     console.error("[CS] Modal element is null, cannot display after injection attempt.");
   }

@@ -1,22 +1,22 @@
-<div id="focusGuardModal" class="focus-guard-modal">
+<div id="focusGuardModal" class="focus-guard-modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="warningText">
   <div class="focus-guard-modal-content">
     <div class="modal-header">
-      <h2>YouTube Focus Guard</h2>
+      <h2 id="modalTitle">Rebound</h2>
     </div>
     
-    <div class="quote-container">
+    <div class="quote-container" aria-live="polite">
       <p id="quoteText"></p>
       <p id="quoteAuthor"></p>
     </div>
 
-    <div class="warning-message">
+    <div class="warning-message" id="warningText">
       <p>This content may not align with your focus areas.</p>
       <p>Do you still want to continue?</p>
     </div>
     
     <div class="button-container">
-      <button id="focusGuardYes">Yes, Continue (<span id="countdown">5</span>)</button>
-      <button id="focusGuardNo">No, Go Back</button>
+      <button id="focusGuardYes" aria-disabled="true">Yes, Continue (<span id="countdown">5</span>)</button>
+      <button id="focusGuardNo" autofocus>No, Go Back</button>
     </div>
   </div>
 </div> 

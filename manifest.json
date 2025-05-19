@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "YouTube Focus Guard",
+  "name": "Rebound - AI YouTube Video Filter",
   "version": "0.1.0",
-  "description": "Helps you avoid procrastination on YouTube by analyzing video content.",
+  "description": "Helps you avoid procrastination on YouTube by analyzing video content - don't waste your time!",
   "permissions": [
     "activeTab",
     "storage",
