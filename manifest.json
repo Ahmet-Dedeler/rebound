@@ -4,10 +4,8 @@
   "version": "0.1.0",
   "description": "Helps you avoid procrastination on YouTube by analyzing video content - don't waste your time!",
   "permissions": [
-    "activeTab",
     "storage",
-    "tabs",
-    "scripting"
+    "tabs"
   ],
   "host_permissions": [
     "https://www.youtube.com/*"
