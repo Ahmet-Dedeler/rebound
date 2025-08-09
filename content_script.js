@@ -318,112 +318,70 @@ function getVideoIdFromUrl(url) {
   }
 }
 
-// Extract video details
+// Extract video details - optimized version with reduced DOM queries
 function extractVideoDetails() {
   let videoTitle = "";
-  let videoDescription = ""; // Initialize with empty string instead of undefined
+  let videoDescription = "";
 
   try {
-    // Try multiple ways to get the title
     // First check document.title directly (most reliable)
     if (document.title && document.title !== "YouTube") {
       videoTitle = document.title.replace(' - YouTube', '').trim();
     }
 
-    // If title is still empty, try various selectors
+    // If title is still empty, use optimized batch querying
     if (!videoTitle || videoTitle === '' || videoTitle === 'YouTube') {
-      const titleSelectors = [
-        'h1.title', 
-        'h1.ytd-watch-metadata',
-        'ytd-watch-metadata h1.title',
-        'h1.title yt-formatted-string',
-        '#container h1.title', 
-        '#meta h1',
-        '#above-the-fold #title h1',
-        '#title h1',
-        '#title',
-        '#info-contents h1',
-        '#video-title',
-        'meta[property="og:title"]',
-        'meta[name="title"]'
-      ];
-
-      for (const selector of titleSelectors) {
-        const element = document.querySelector(selector);
-        if (element) {
-          const text = element.matches('meta') ? element.content : element.textContent;
-          if (text && text.trim()) {
-            videoTitle = text.trim();
-            break;
-          }
+      const allTitleSelectors = 'h1.title, h1.ytd-watch-metadata, ytd-watch-metadata h1.title, h1.title yt-formatted-string, #container h1.title, #meta h1, #above-the-fold #title h1, #title h1, #title, #info-contents h1, #video-title, meta[property="og:title"], meta[name="title"]';
+      const titleElements = document.querySelectorAll(allTitleSelectors);
+      
+      for (const element of titleElements) {
+        const text = element.matches('meta') ? element.content : element.textContent;
+        if (text && text.trim()) {
+          videoTitle = text.trim();
+          break;
         }
       }
     }
 
     debugLog("[CS] Extracted title:", videoTitle);
     
-    // Try to get the description - multiple approaches
-    const descriptionSelectors = [
-      '#description ytd-text-inline-expander',
-      '#description #description-text',
-      '#description #content',
-      '#description',
-      '.ytd-text-inline-expander',
-      'ytd-expander[expanded] #content',
-      'ytd-expander #content',
-      '#meta-contents #description',
-      'meta[property="og:description"]',
-      'meta[name="description"]'
-    ];
-
-    for (const selector of descriptionSelectors) {
-      const element = document.querySelector(selector);
-      if (element) {
-        const text = element.matches('meta') ? 
-          element.content : 
-          element.textContent || element.innerText;
-        
-        if (text && text.trim()) {
-          videoDescription = text.trim();
-          debugLog("[CS] Found description with selector:", selector);
-          break;
-        }
+    const allDescriptionSelectors = '#description ytd-text-inline-expander, #description #description-text, #description #content, #description, .ytd-text-inline-expander, ytd-expander[expanded] #content, ytd-expander #content, #meta-contents #description, meta[property="og:description"], meta[name="description"]';
+    const descriptionElements = document.querySelectorAll(allDescriptionSelectors);
+    
+    for (const element of descriptionElements) {
+      const text = element.matches('meta') ? 
+        element.content : 
+        element.textContent || element.innerText;
+      
+      if (text && text.trim()) {
+        videoDescription = text.trim();
+        debugLog("[CS] Found description with optimized query");
+        break;
       }
     }
 
-    // Try to expand the description by clicking "Show more" if available
+    // Try to expand description if it's too short - optimized button finding
     if (!videoDescription || videoDescription.length < 50) {
-      const showMoreButtons = [
-        '#expand',
-        '#description tp-yt-paper-button#expand',
-        '#description #expand',
-        '#more-button',
-        '.more-button',
-        'ytd-text-inline-expander tp-yt-paper-button',
-        'button.ytd-expander',
-        'ytd-expander #more'
-      ];
+      const allShowMoreSelectors = '#expand, #description tp-yt-paper-button#expand, #description #expand, #more-button, .more-button, ytd-text-inline-expander tp-yt-paper-button, button.ytd-expander, ytd-expander #more';
+      const showMoreButtons = document.querySelectorAll(allShowMoreSelectors);
       
-      for (const buttonSelector of showMoreButtons) {
-        const showMoreButton = document.querySelector(buttonSelector);
+      for (const showMoreButton of showMoreButtons) {
         if (showMoreButton) {
           try {
-            debugLog("[CS] Found Show More button:", buttonSelector);
+            debugLog("[CS] Found Show More button, attempting click");
             showMoreButton.click();
             debugLog("[CS] Clicked 'Show more' button");
             
-            // Try again to get the expanded description
             setTimeout(() => {
-              for (const selector of descriptionSelectors) {
-                const element = document.querySelector(selector);
-                if (element) {
-                  const text = element.matches('meta') ? 
-                    element.content : 
-                    element.textContent || element.innerText;
-                  
-                  if (text && text.trim() && text.length > videoDescription.length) {
-                    videoDescription = text.trim();
-                  }
+              const expandedElements = document.querySelectorAll(allDescriptionSelectors);
+              for (const element of expandedElements) {
+                const text = element.matches('meta') ? 
+                  element.content : 
+                  element.textContent || element.innerText;
+                
+                if (text && text.trim() && text.length > videoDescription.length) {
+                  videoDescription = text.trim();
+                  break;
                 }
               }
             }, 300);
@@ -446,7 +404,6 @@ function extractVideoDetails() {
     
   } catch (error) {
     console.error("[CS] Error extracting video details:", error);
-    // Ensure we still return something
     if (videoTitle && !videoDescription) {
       videoDescription = `Video: ${videoTitle}`;
     }
@@ -751,4 +708,4 @@ async function showWarningModal() {
   } else {
     console.error("[CS] Modal element is null, cannot display after injection attempt.");
   }
-} 
+}  
