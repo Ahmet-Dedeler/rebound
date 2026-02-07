@@ -23,6 +23,10 @@ let processingInProgress = false;
 let navigationObserverSet = false;
 let previousActiveElement = null;
 
+function isYouTubeMusicHost() {
+  return window.location.hostname === 'music.youtube.com';
+}
+
 // Initialize when DOM is ready or immediately if already loaded
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initialize);
@@ -32,6 +36,11 @@ if (document.readyState === 'loading') {
 
 // Wait for YouTube to be ready (it's a complex SPA)
 function initialize() {
+  if (isYouTubeMusicHost()) {
+    debugLog("[CS] Skipping initialization on music.youtube.com");
+    return;
+  }
+
   debugLog("[CS] Initializing content script");
   
   // Check current page once on initialization
@@ -220,6 +229,15 @@ function setupAdaptiveChecking() {
 // Check if we're on a YouTube video page
 function checkCurrentPage() {
   try {
+    if (isYouTubeMusicHost()) {
+      if (isVideoPage) {
+        isVideoPage = false;
+        currentVideoId = null;
+        videoDetailsExtracted = false;
+      }
+      return;
+    }
+
     const url = window.location.href;
     const videoId = getVideoIdFromUrl(url);
     
@@ -690,9 +708,9 @@ async function showWarningModal() {
         return;
       }
       const modalHTML = await response.text();
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = modalHTML;
-      modalElement = tempDiv.firstChild;
+      const parser = new DOMParser();
+      const parsedModalDocument = parser.parseFromString(modalHTML, 'text/html');
+      modalElement = parsedModalDocument.body.firstElementChild;
       if (!modalElement) {
         console.error("[CS] Failed to create modal element from HTML.");
         return;

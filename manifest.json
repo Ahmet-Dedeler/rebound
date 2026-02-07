@@ -16,6 +16,7 @@
   "content_scripts": [
     {
       "matches": ["*://*.youtube.com/*"],
+      "exclude_matches": ["*://music.youtube.com/*"],
       "js": ["quotes.js", "content_script.js"],
       "css": ["warning_style.css"],
       "run_at": "document_idle"

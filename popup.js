@@ -20,15 +20,23 @@ document.addEventListener('DOMContentLoaded', () => {
   const mainContent = document.getElementById('mainContent');
   const offScreen = document.getElementById('offScreen');
 
-  // Function to format keywords into HTML
-  function formatKeywords(keywords) {
+  function renderKeywords(container, keywords) {
+    container.replaceChildren();
+
     if (!keywords || keywords.length === 0) {
-      return '<em>Nothing set yet</em>';
+      const emptyState = document.createElement('em');
+      emptyState.textContent = 'Nothing set yet';
+      container.appendChild(emptyState);
+      return;
     }
-    
-    return keywords.map(keyword => {
-      return `<span class="keyword-tag">${keyword}</span>`;
-    }).join(' ');
+
+    keywords.forEach((keyword) => {
+      const tag = document.createElement('span');
+      tag.className = 'keyword-tag';
+      tag.textContent = keyword;
+      container.appendChild(tag);
+      container.appendChild(document.createTextNode(' '));
+    });
   }
 
   // Function to toggle extension on/off
@@ -53,13 +61,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load stored preferences and state
   chrome.storage.sync.get(['preferredContent', 'nonPreferredContent', 'warningsEnabled', 'extensionPaused'], (data) => {
     // Format and display keywords
-    preferredKeywordsDiv.innerHTML = data.preferredContent ? 
-      formatKeywords(data.preferredContent) : 
-      '<em>Nothing set yet</em>';
-    
-    nonPreferredKeywordsDiv.innerHTML = data.nonPreferredContent ? 
-      formatKeywords(data.nonPreferredContent) : 
-      '<em>Nothing set yet</em>';
+    renderKeywords(preferredKeywordsDiv, data.preferredContent || []);
+    renderKeywords(nonPreferredKeywordsDiv, data.nonPreferredContent || []);
     
     // Set checkbox states
     warningsEnabledCheckbox.checked = data.warningsEnabled !== undefined ? data.warningsEnabled : true;

@@ -28,13 +28,19 @@ document.addEventListener('DOMContentLoaded', () => {
   function createTagElement(text, type) {
     const tag = document.createElement('div');
     tag.className = 'tag';
-    tag.innerHTML = `
-      <span class="tag-text">${text}</span>
-      <span class="tag-delete">&times;</span>
-    `;
+    const textSpan = document.createElement('span');
+    textSpan.className = 'tag-text';
+    textSpan.textContent = text;
+
+    const deleteSpan = document.createElement('span');
+    deleteSpan.className = 'tag-delete';
+    deleteSpan.textContent = '\u00D7';
+
+    tag.appendChild(textSpan);
+    tag.appendChild(deleteSpan);
     
     // Add event listener to delete button
-    tag.querySelector('.tag-delete').addEventListener('click', () => {
+    deleteSpan.addEventListener('click', () => {
       removeTag(text, type);
     });
     
@@ -88,7 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const tagsArray = type === 'preferred' ? preferredTags : nonPreferredTags;
     
     // Clear container
-    container.innerHTML = '';
+    container.replaceChildren();
     
     // Add tags if they exist
     if (tagsArray.length > 0) {

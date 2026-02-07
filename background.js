@@ -19,6 +19,36 @@ const tabHistory = {};
 // Store recent video analyses to avoid duplicate requests for the same video
 const recentAnalyses = {};
 
+function tryParseUrl(url) {
+  try {
+    return new URL(url);
+  } catch (e) {
+    return null;
+  }
+}
+
+function isYouTubeHost(hostname) {
+  return hostname === "youtube.com" || hostname.endsWith(".youtube.com");
+}
+
+function isYouTubeUrl(url) {
+  const parsed = tryParseUrl(url);
+  return !!parsed && isYouTubeHost(parsed.hostname);
+}
+
+function isYouTubeWatchUrl(url) {
+  const parsed = tryParseUrl(url);
+  return !!parsed &&
+    isYouTubeHost(parsed.hostname) &&
+    parsed.pathname === "/watch" &&
+    parsed.searchParams.has("v");
+}
+
+function isYouTubeMusicUrl(url) {
+  const parsed = tryParseUrl(url);
+  return !!parsed && parsed.hostname === "music.youtube.com";
+}
+
 // Listener for first install to open options page
 chrome.runtime.onInstalled.addListener(details => {
   if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
@@ -39,9 +69,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // Only process complete page loads with a URL
   if (changeInfo.status === 'complete' && tab.url) {
     debugLog(`[BG] Tab ${tabId} updated: ${tab.url}`);
+
+    if (isYouTubeMusicUrl(tab.url)) {
+      debugLog(`[BG] Skipping YouTube Music tab ${tabId}`);
+      return;
+    }
     
     // Track all YouTube navigation to maintain history for going back
-    if (tab.url.includes("youtube.com")) {
+    if (isYouTubeUrl(tab.url)) {
       // Initialize history array if it doesn't exist
       if (!tabHistory[tabId]) {
         tabHistory[tabId] = { urls: [] };
@@ -56,7 +91,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       
       // On completed navigation to a YouTube video page, try to inject our content script if needed
       // This is a fallback to ensure content script is active in edge cases
-      if (tab.url.includes("/watch?v=")) {
+      if (isYouTubeWatchUrl(tab.url)) {
         const videoId = getVideoIdFromUrl(tab.url);
         debugLog(`[BG] Detected YouTube video page load: ${videoId}`);
       }
@@ -74,13 +109,9 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // Extract video ID from YouTube URL
 function getVideoIdFromUrl(url) {
-  try {
-    const match = url.match(/[?&]v=([^&#]*)/);
-    return match ? match[1] : null;
-  } catch (e) {
-    console.error("[BG] Error extracting video ID:", e);
-    return null;
-  }
+  const parsed = tryParseUrl(url);
+  if (!parsed) return null;
+  return parsed.searchParams.get("v");
 }
 
 // Function to get a non-video YouTube URL from tab history
@@ -96,7 +127,11 @@ function getPreviousNonVideoUrl(tabId) {
   // Start from the second-to-last URL (index length-2) since the last one is the current video
   for (let i = urls.length - 2; i >= 0; i--) {
     // If this URL is not a video URL, return it
-    if (!urls[i].includes("/watch?v=")) {
+    if (!isYouTubeUrl(urls[i])) {
+      continue;
+    }
+
+    if (!isYouTubeWatchUrl(urls[i])) {
       return urls[i];
     }
   }
@@ -115,9 +150,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const tabId = sender.tab.id;
     const url = sender.tab.url;
     
-    if (!url || !url.includes("/watch?v=")) {
+    if (!url || !isYouTubeWatchUrl(url)) {
       debugLog("[BG] Message came from non-video page, ignoring");
       sendResponse({ status: "Not a video page" });
+      return true;
+    }
+
+    if (isYouTubeMusicUrl(url)) {
+      debugLog("[BG] Message came from YouTube Music, ignoring");
+      sendResponse({ status: "Ignored on YouTube Music" });
       return true;
     }
     
@@ -227,6 +268,7 @@ async function analyzeContent(videoTitle, videoDescription, preferredContent, no
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Extension-Id': chrome.runtime.id
       },
       body: JSON.stringify({
         videoTitle: videoTitle,
