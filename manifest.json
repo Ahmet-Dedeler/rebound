@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Rebound - AI YouTube Video Filter",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Helps you avoid procrastination on YouTube by analyzing video content - don't waste your time!",
   "permissions": [
     "storage",
