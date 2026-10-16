@@ -4,10 +4,18 @@ Rebound is a browser extension that helps you avoid procrastination on YouTube b
 
 ## Features
 
-- **Keyword-based filtering:** Define lists of preferred and non-preferred keywords to tailor your YouTube experience.
-- **Warning messages:** Get alerts for content that matches your non-preferred keywords, helping you stay on track.
-- **Easy toggle:** Quickly enable or disable the extension directly from the popup.
-- **Customizable preferences:** Easily add or remove keywords through the extension's options page.
+- **AI focus check:** When you open a YouTube video, Rebound asks an AI model whether it fits your focus, using the video's title, channel and description plus your keyword lists.
+- **Warning with friction:** A distracting video is paused behind a short "are you sure?" screen with a 5-second cooldown before you can continue.
+- **Your keywords steer it:** List topics you want to see and topics that tend to distract you.
+- **Easy toggle:** Turn Rebound on or off, or just the warnings, from the popup.
+
+## Privacy
+
+- Rebound only runs on `https://www.youtube.com`. It needs just the `storage` permission (to keep your settings).
+- For each video you open, the title, description, channel name and your two keyword lists are sent to Rebound's server, which forwards them to an AI model for a one-word verdict. Nothing else is sent: no account, no watch history, no browsing data.
+- The server logs only request sizes, never the content. Requests sent through OpenRouter opt out of provider data collection.
+- Your settings live in `chrome.storage.sync`. Verdicts are cached in memory for the browser session only.
+- No API keys are in this repository or the extension; the server holds them.
 
 ## Installation
 
@@ -41,7 +49,7 @@ Rebound is a browser extension that helps you avoid procrastination on YouTube b
 
 4.  **Warning Messages:**
     *   In the popup, use the "Warning Messages" toggle to enable or disable the warning prompts for non-preferred content.
-    *   When enabled, if you navigate to a YouTube video whose title or description (based on YouTube's own metadata) matches your non-preferred keywords, a warning modal will appear, giving you a chance to reconsider watching the video.
+    *   When enabled, if the AI judges that a video you open doesn't fit your focus, a warning modal appears and the video is paused, giving you a chance to reconsider.
 
 ## Contributing
 

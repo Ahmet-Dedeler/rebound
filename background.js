@@ -1,352 +1,144 @@
-// Background script for YouTube Focus Guard
-// Set to false in production builds
+// Rebound - background service worker (Manifest V3).
+//
+// The service worker is stopped by Chrome after ~30s of inactivity, so it must never rely on
+// in-memory state: anything that has to survive goes in chrome.storage.* instead.
+//
+// Its only job is to ask our server whether a video fits the user's focus. The fetch has to
+// live here (not in the content script) because a content script's requests carry YouTube's
+// origin, while the server authenticates the request by the extension's own origin.
+//
+// No API keys live in the extension. The server holds them and only ever sees the video
+// title/description and the user's keyword lists.
+
 const DEBUG = false;
-
-// Log function that only logs in debug mode
-function debugLog(...args) {
-  if (DEBUG) {
-    console.log(...args);
-  }
-}
-
-debugLog("Background script loaded. v5");
+const debugLog = (...args) => DEBUG && console.log("[BG]", ...args);
 
 const SERVER_URL = "https://ai-youtube-extension-server.vercel.app/analyze-video";
+const REQUEST_TIMEOUT_MS = 15000;
 
-// Store tab navigation history
-const tabHistory = {};
+// Verdict cache (chrome.storage.session: cleared when the browser closes, never synced).
+// Re-opening a video you already judged costs no API call.
+const CACHE_KEY = "verdictCache";
+const CACHE_MAX_ENTRIES = 200;
 
-// Store recent video analyses to avoid duplicate requests for the same video
-const recentAnalyses = {};
+const DEFAULT_SETTINGS = {
+  warningsEnabled: true,
+  extensionPaused: false,
+  preferredContent: [],
+  nonPreferredContent: []
+};
 
-function tryParseUrl(url) {
-  try {
-    return new URL(url);
-  } catch (e) {
-    return null;
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
+    chrome.storage.sync.set(DEFAULT_SETTINGS);
+    chrome.runtime.openOptionsPage();
   }
-}
+});
 
-function isYouTubeHost(hostname) {
-  return hostname === "youtube.com" || hostname.endsWith(".youtube.com");
-}
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  // Only accept messages from our own content script running on a YouTube page.
+  if (sender.id !== chrome.runtime.id || !isYouTubeUrl(sender.url)) return false;
+
+  if (request?.action === "analyzeVideo") {
+    analyzeVideo(request)
+      .then(sendResponse)
+      .catch((error) => {
+        console.error("[BG] analyzeVideo failed:", error);
+        sendResponse({ status: "error", error: "Could not analyze this video. Please try again later." });
+      });
+    return true; // keep the channel open for the async response
+  }
+
+  return false;
+});
 
 function isYouTubeUrl(url) {
-  const parsed = tryParseUrl(url);
-  return !!parsed && isYouTubeHost(parsed.hostname);
-}
-
-function isYouTubeWatchUrl(url) {
-  const parsed = tryParseUrl(url);
-  return !!parsed &&
-    isYouTubeHost(parsed.hostname) &&
-    parsed.pathname === "/watch" &&
-    parsed.searchParams.has("v");
-}
-
-function isYouTubeMusicUrl(url) {
-  const parsed = tryParseUrl(url);
-  return !!parsed && parsed.hostname === "music.youtube.com";
-}
-
-// Listener for first install to open options page
-chrome.runtime.onInstalled.addListener(details => {
-  if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
-    chrome.runtime.openOptionsPage();
-    // Initialize default settings
-    chrome.storage.sync.set({
-      warningsEnabled: true,
-      extensionPaused: false,
-      preferredContent: [],
-      nonPreferredContent: []
-    });
-  }
-  debugLog("[BG] Extension installed/updated");
-});
-
-// Track tab navigation to keep history of where users came from
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // Only process complete page loads with a URL
-  if (changeInfo.status === 'complete' && tab.url) {
-    debugLog(`[BG] Tab ${tabId} updated: ${tab.url}`);
-
-    if (isYouTubeMusicUrl(tab.url)) {
-      debugLog(`[BG] Skipping YouTube Music tab ${tabId}`);
-      return;
-    }
-    
-    // Track all YouTube navigation to maintain history for going back
-    if (isYouTubeUrl(tab.url)) {
-      // Initialize history array if it doesn't exist
-      if (!tabHistory[tabId]) {
-        tabHistory[tabId] = { urls: [] };
-      }
-      
-      // Add URL to history if it's new and not a duplicate of the last entry
-      const history = tabHistory[tabId];
-      if (history.urls.length === 0 || history.urls[history.urls.length - 1] !== tab.url) {
-        history.urls.push(tab.url);
-        debugLog(`[BG] Added ${tab.url} to history for tab ${tabId}. History:`, history.urls);
-      }
-      
-      // On completed navigation to a YouTube video page, try to inject our content script if needed
-      // This is a fallback to ensure content script is active in edge cases
-      if (isYouTubeWatchUrl(tab.url)) {
-        const videoId = getVideoIdFromUrl(tab.url);
-        debugLog(`[BG] Detected YouTube video page load: ${videoId}`);
-      }
-    }
-  }
-});
-
-// Remove history when tab is closed
-chrome.tabs.onRemoved.addListener((tabId) => {
-  if (tabHistory[tabId]) {
-    delete tabHistory[tabId];
-    debugLog(`[BG] Removed history for tab ${tabId} because it was closed`);
-  }
-});
-
-// Extract video ID from YouTube URL
-function getVideoIdFromUrl(url) {
-  const parsed = tryParseUrl(url);
-  if (!parsed) return null;
-  return parsed.searchParams.get("v");
-}
-
-// Function to get a non-video YouTube URL from tab history
-function getPreviousNonVideoUrl(tabId) {
-  if (!tabHistory[tabId] || !tabHistory[tabId].urls || tabHistory[tabId].urls.length <= 1) {
-    // No history or only one entry, go to YouTube home
-    return "https://www.youtube.com/";
-  }
-  
-  // Get the urls for this tab and find the most recent non-video URL
-  const urls = tabHistory[tabId].urls;
-  
-  // Start from the second-to-last URL (index length-2) since the last one is the current video
-  for (let i = urls.length - 2; i >= 0; i--) {
-    // If this URL is not a video URL, return it
-    if (!isYouTubeUrl(urls[i])) {
-      continue;
-    }
-
-    if (!isYouTubeWatchUrl(urls[i])) {
-      return urls[i];
-    }
-  }
-  
-  // If all are video URLs, go to YouTube home
-  return "https://www.youtube.com/";
-}
-
-// Listen for messages from content script 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // Log all incoming messages with sender information
-  debugLog("[BG] Received message:", request.action, "from tab:", sender.tab?.id);
-  
-  // Handle full video details - main entry point for analysis
-  if (request.action === "fullVideoDetails" && sender.tab) {
-    const tabId = sender.tab.id;
-    const url = sender.tab.url;
-    
-    if (!url || !isYouTubeWatchUrl(url)) {
-      debugLog("[BG] Message came from non-video page, ignoring");
-      sendResponse({ status: "Not a video page" });
-      return true;
-    }
-
-    if (isYouTubeMusicUrl(url)) {
-      debugLog("[BG] Message came from YouTube Music, ignoring");
-      sendResponse({ status: "Ignored on YouTube Music" });
-      return true;
-    }
-    
-    const videoId = getVideoIdFromUrl(url);
-    if (!videoId) {
-      debugLog("[BG] Could not extract video ID from URL:", url);
-      sendResponse({ status: "No video ID found" });
-      return true;
-    }
-    
-    debugLog("[BG] Processing video details from tab", tabId, "Video ID:", videoId);
-    
-    // Skip if we've recently analyzed this video (prevent duplicates)
-    const videoKey = `${tabId}_${videoId}`;
-    const now = Date.now();
-    if (recentAnalyses[videoKey] && now - recentAnalyses[videoKey].timestamp < 10000) { // 10 seconds
-      debugLog("[BG] Skipping duplicate analysis request for recently analyzed video:", videoId);
-      sendResponse({ status: "Skipping duplicate analysis request" });
-      return true;
-    }
-    
-    // Add URL to history if it's not already tracked
-    if (url) {
-      if (!tabHistory[tabId]) {
-        tabHistory[tabId] = { urls: [url] };
-      } else if (tabHistory[tabId].urls.length === 0 || 
-                 tabHistory[tabId].urls[tabHistory[tabId].urls.length - 1] !== url) {
-        tabHistory[tabId].urls.push(url);
-      }
-    }
-    
-    // Update recent analyses timestamp
-    recentAnalyses[videoKey] = { timestamp: now };
-    
-    // Check if extension is paused or warnings disabled
-    chrome.storage.sync.get(['extensionPaused', 'warningsEnabled', 'preferredContent', 'nonPreferredContent'], (settings) => {
-      if (settings.extensionPaused) {
-        debugLog("[BG] Extension is paused. Skipping analysis.");
-        sendResponse({ status: "Extension is paused" });
-        return;
-      }
-      
-      if (!settings.warningsEnabled) {
-        debugLog("[BG] Warnings are disabled. Skipping analysis.");
-        sendResponse({ status: "Warnings are disabled" });
-        return;
-      }
-      
-      // Ensure we have the content to analyze
-      if (!request.videoTitle) {
-        debugLog("[BG] No video title provided for analysis");
-        sendResponse({ status: "No title provided for analysis" });
-        return;
-      }
-      
-      debugLog("[BG] Analyzing video:", request.videoTitle);
-      
-      // Send to server for analysis
-      analyzeContent(
-        request.videoTitle,
-        request.videoDescription || "",
-        settings.preferredContent || [],
-        settings.nonPreferredContent || [],
-        tabId
-      );
-      
-      sendResponse({ status: "Processing video for analysis" });
-    });
-    
-    return true;
-  }
-  
-  // Handle go back request
-  if (request.action === "goBack" && sender.tab) {
-    const tabId = sender.tab.id;
-    debugLog("[BG] Received 'goBack' from tab:", tabId);
-    
-    const previousUrl = getPreviousNonVideoUrl(tabId);
-    debugLog("[BG] Navigating to previous URL:", previousUrl);
-    
-    // Navigate to the previous URL
-    chrome.tabs.update(tabId, { url: previousUrl }, () => {
-      if (chrome.runtime.lastError) {
-        console.error("[BG] Error navigating back:", chrome.runtime.lastError.message);
-        // Fallback to closing the tab if navigation fails
-        chrome.tabs.remove(tabId);
-      }
-      sendResponse({ status: "Navigation initiated or tab closed" });
-    });
-    return true;
-  }
-  
-  sendResponse({ status: "Message received" });
-  return true;
-});
-
-// Function to send content to server for analysis
-async function analyzeContent(videoTitle, videoDescription, preferredContent, nonPreferredContent, tabId) {
   try {
-    debugLog("[BG] Sending to server:", SERVER_URL);
-    debugLog("[BG] Title:", videoTitle);
-    debugLog("[BG] Description preview:", videoDescription.substring(0, 50) + "...");
-    debugLog("[BG] Preferred content:", preferredContent);
-    debugLog("[BG] Non-preferred content:", nonPreferredContent);
-
-    const serverResponse = await fetch(SERVER_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Extension-Id': chrome.runtime.id
-      },
-      body: JSON.stringify({
-        videoTitle: videoTitle,
-        videoDescription: videoDescription,
-        preferredContent: preferredContent || [],
-        nonPreferredContent: nonPreferredContent || []
-      }),
-    });
-
-    const responseText = await serverResponse.text(); // Get text first for better error diagnosis
-    
-    if (!serverResponse.ok) {
-      const errorMessage = `Server error (${serverResponse.status}): ${responseText.substring(0, 100)}`;
-      console.error("[BG] Error from server:", errorMessage);
-      
-      // Notify the user via content script
-      notifyUserOfError(tabId, errorMessage);
-      return; // Don't proceed if server error
-    }
-
-    let analysisResult;
-    try {
-      analysisResult = JSON.parse(responseText); // Parse JSON after confirming OK
-    } catch (jsonError) {
-      const errorMessage = `Failed to parse server response: ${responseText.substring(0, 100)}`;
-      console.error("[BG] JSON parse error:", jsonError);
-      
-      // Notify the user via content script
-      notifyUserOfError(tabId, errorMessage);
-      return;
-    }
-    
-    debugLog("[BG] Received from server:", analysisResult);
-    handleAnalysisResponse(analysisResult, tabId);
-
-  } catch (error) {
-    console.error("[BG] Failed to send data to server:", error);
-    
-    // Create a user-friendly error message
-    const errorMessage = "Could not connect to analysis server. Please try again later.";
-    
-    // Notify the user via content script
-    notifyUserOfError(tabId, errorMessage);
+    return new URL(url).origin === "https://www.youtube.com";
+  } catch {
+    return false;
   }
 }
 
-// Notify the user of an error via content script
-function notifyUserOfError(tabId, errorMessage) {
-  chrome.tabs.sendMessage(tabId, { 
-    action: "showError", 
-    errorMessage: errorMessage 
-  }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error("[BG] Error sending error notification:", chrome.runtime.lastError.message);
-    }
+/**
+ * Decide whether a video aligns with the user's focus.
+ * Resolves to { status: "ok", alignsWithFocus } | { status: "skipped", reason } | { status: "error", error }.
+ */
+async function analyzeVideo({ videoId, videoTitle, videoDescription, channelName }) {
+  if (typeof videoId !== "string" || typeof videoTitle !== "string" || !videoTitle.trim()) {
+    return { status: "skipped", reason: "No video title" };
+  }
+
+  const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+  if (settings.extensionPaused) return { status: "skipped", reason: "Extension is paused" };
+  if (!settings.warningsEnabled) return { status: "skipped", reason: "Warnings are disabled" };
+
+  const preferredContent = settings.preferredContent || [];
+  const nonPreferredContent = settings.nonPreferredContent || [];
+
+  // The verdict depends on the video AND the keyword lists, so both go into the key.
+  const cacheKey = `${videoId}:${hashString(JSON.stringify([preferredContent, nonPreferredContent]))}`;
+  const cached = await readCache(cacheKey);
+  if (cached !== undefined) {
+    debugLog("Cache hit", cacheKey);
+    return { status: "ok", alignsWithFocus: cached };
+  }
+
+  const response = await fetch(SERVER_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Extension-Id": chrome.runtime.id
+    },
+    body: JSON.stringify({
+      videoTitle,
+      videoDescription: videoDescription || "",
+      channelName: channelName || "",
+      preferredContent,
+      nonPreferredContent
+    }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   });
+
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 100);
+    console.error(`[BG] Server error ${response.status}: ${detail}`);
+    return { status: "error", error: `Analysis server error (${response.status}). Please try again later.` };
+  }
+
+  const result = await response.json();
+  if (typeof result?.alignsWithFocus !== "boolean") {
+    return { status: "error", error: "Received an invalid response from the analysis server." };
+  }
+
+  await writeCache(cacheKey, result.alignsWithFocus);
+  return { status: "ok", alignsWithFocus: result.alignsWithFocus };
 }
 
-// Handle the analysis response from the server
-function handleAnalysisResponse(analysis, tabId) {
-  debugLog("[BG] Handling analysis response:", analysis);
-  
-  // Check if the response is valid and has the expected format
-  if (!analysis || typeof analysis !== 'object') {
-    notifyUserOfError(tabId, "Received invalid analysis response from server");
-    return;
+// --- verdict cache -------------------------------------------------------------------------
+
+async function readCache(key) {
+  const { [CACHE_KEY]: cache = {} } = await chrome.storage.session.get(CACHE_KEY);
+  return cache[key];
+}
+
+async function writeCache(key, value) {
+  const { [CACHE_KEY]: cache = {} } = await chrome.storage.session.get(CACHE_KEY);
+  delete cache[key]; // re-insert so the entry becomes the newest
+  cache[key] = value;
+  // Object keys keep insertion order, so the oldest entries are first: drop them past the cap.
+  const keys = Object.keys(cache);
+  for (const oldKey of keys.slice(0, Math.max(0, keys.length - CACHE_MAX_ENTRIES))) {
+    delete cache[oldKey];
   }
-  
-  if (analysis && analysis.alignsWithFocus === false) {
-    debugLog("[BG] Video does NOT align. Sending 'showWarning' to tab:", tabId);
-    chrome.tabs.sendMessage(tabId, { action: "showWarning" }, (msgResponse) => {
-      if (chrome.runtime.lastError) {
-        console.error("[BG] Error sending 'showWarning' message:", chrome.runtime.lastError.message);
-      } else {
-        debugLog("[BG] 'showWarning' message sent, response from content script:", msgResponse);
-      }
-    });
-  } else {
-    debugLog("[BG] Video aligns with focus or analysis defaulted/failed. No warning needed. Analysis:", analysis);
+  await chrome.storage.session.set({ [CACHE_KEY]: cache });
+}
+
+// Small non-cryptographic hash (djb2) just to keep cache keys short.
+function hashString(text) {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
   }
-} 
+  return (hash >>> 0).toString(36);
+}

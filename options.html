@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Rebound - Setup</title>
   <link rel="stylesheet" type="text/css" href="options.css">
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
   <div class="container">
@@ -17,14 +17,14 @@
     </header>
 
     <div class="setup-section">
-      <h2><i class="fas fa-check-circle positive-icon"></i> I want to see</h2>
+      <h2><svg class="icon positive-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg> I want to see</h2>
       <p class="hint">Add topics and content types that help you stay productive.</p>
       <div class="input-container">
         <div class="tag-input-container">
           <div class="input-with-button">
-            <input type="text" id="preferredContentInput" placeholder="Add a topic and press Enter">
+            <input type="text" id="preferredContentInput" placeholder="Add a topic and press Enter" maxlength="80" autocomplete="off">
             <button id="addPreferredButton" class="add-button" aria-label="Add topic">
-              <i class="fas fa-plus"></i>
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
             </button>
           </div>
           <div id="preferredTags" class="tags-container positive"></div>
@@ -34,14 +34,14 @@
     </div>
 
     <div class="setup-section">
-      <h2><i class="fas fa-times-circle negative-icon"></i> I don't want to see</h2>
+      <h2><svg class="icon negative-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z"/></svg> I don't want to see</h2>
       <p class="hint">Add topics and content types that tend to distract you.</p>
       <div class="input-container">
         <div class="tag-input-container">
           <div class="input-with-button">
-            <input type="text" id="nonPreferredContentInput" placeholder="Add a topic and press Enter">
+            <input type="text" id="nonPreferredContentInput" placeholder="Add a topic and press Enter" maxlength="80" autocomplete="off">
             <button id="addNonPreferredButton" class="add-button" aria-label="Add topic">
-              <i class="fas fa-plus"></i>
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
             </button>
           </div>
           <div id="nonPreferredTags" class="tags-container negative"></div>
@@ -55,7 +55,7 @@
     <div class="attribution">
       Made by <a href="https://ahmetdedeler.com" target="_blank" rel="noopener noreferrer">Ahmet</a> | 
       <a href="https://github.com/Ahmet-Dedeler/rebound" target="_blank" rel="noopener noreferrer">
-        <i class="fab fa-github"></i> GitHub
+         GitHub
       </a>
     </div>
   </footer>

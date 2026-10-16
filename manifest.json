@@ -1,24 +1,27 @@
 {
   "manifest_version": 3,
   "name": "Rebound - AI YouTube Video Filter",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Helps you avoid procrastination on YouTube by analyzing video content - don't waste your time!",
+  "minimum_chrome_version": "110",
   "permissions": [
-    "storage",
-    "tabs"
-  ],
-  "host_permissions": [
-    "https://www.youtube.com/*"
+    "storage"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["*://*.youtube.com/*"],
-      "exclude_matches": ["*://music.youtube.com/*"],
-      "js": ["quotes.js", "content_script.js"],
-      "css": ["warning_style.css"],
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "quotes.js",
+        "content_script.js"
+      ],
+      "css": [
+        "warning_style.css"
+      ],
       "run_at": "document_idle"
     }
   ],
@@ -38,11 +41,5 @@
     "16": "images/icon16.png",
     "48": "images/icon48.png",
     "128": "images/icon128.png"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": ["warning_modal.html", "quotes.js"],
-      "matches": ["*://*.youtube.com/*"]
-    }
-  ]
-} 
+  }
+}

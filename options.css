@@ -315,3 +315,10 @@ footer {
     padding: 10px;
   }
 } 
+/* Inline SVG icons (no remote icon font) */
+.icon {
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  flex: none;
+}

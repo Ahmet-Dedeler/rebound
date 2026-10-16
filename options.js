@@ -20,6 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const addNonPreferredButton = document.getElementById('addNonPreferredButton');
   // No darkModeToggle, no htmlElement
   
+  // Same limits the server enforces (MAX_KEYWORDS / MAX_KEYWORD_LENGTH), so tags are never rejected.
+  const MAX_TAGS = 50;
+  const MAX_TAG_LENGTH = 80;
+
   // State variables
   let preferredTags = [];
   let nonPreferredTags = [];
@@ -51,11 +55,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function addTag(text, type) {
     if (!text || text.trim() === '') return;
     
-    text = text.trim();
+    text = text.trim().slice(0, MAX_TAG_LENGTH);
     const tagsArray = type === 'preferred' ? preferredTags : nonPreferredTags;
     
-    // Skip if tag already exists
-    if (tagsArray.includes(text)) return;
+    // Skip duplicates (case-insensitive) and respect the per-list cap
+    if (tagsArray.some(tag => tag.toLowerCase() === text.toLowerCase())) return;
+    if (tagsArray.length >= MAX_TAGS) return;
     
     // Add to array
     tagsArray.push(text);

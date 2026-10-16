@@ -1,772 +1,370 @@
-// Content script for YouTube Focus Guard v9
-// Set to false in production builds
+// Rebound - content script (runs on https://www.youtube.com/*).
+//
+// YouTube is a single-page app: moving between videos does not reload the page. We rely on
+// YouTube's own `yt-navigate-finish` event to notice navigation, instead of polling the URL
+// or patching history methods (a content script lives in an isolated world, so patching
+// `history.pushState` here would never see YouTube's calls anyway).
+//
+// For each watch page we read the title/description/channel, ask the background worker for a
+// verdict, and show the warning modal if the video doesn't fit the user's focus.
+
 const DEBUG = false;
+const debugLog = (...args) => DEBUG && console.log("[CS]", ...args);
 
-// Logging function that only logs in debug mode
-function debugLog(...args) {
-  if (DEBUG) {
-    console.log(...args);
-  }
-}
+// Server limit is 4000 chars per text field; stay under it.
+const MAX_DESCRIPTION_LENGTH = 3500;
+// How long we wait for YouTube to render the new video's metadata after a navigation.
+const DETAIL_POLL_INTERVAL_MS = 400;
+const DETAIL_POLL_MAX_ATTEMPTS = 15;
+// Give the description a few attempts to appear, but don't block on it forever.
+const DESCRIPTION_GRACE_ATTEMPTS = 4;
 
-debugLog("[CS] Content script loading with improved SPA support. v9");
+const HISTORY_KEY = "rebound:history";
+const HISTORY_MAX_ENTRIES = 50;
+const COUNTDOWN_SECONDS = 5;
 
-// State variables
-let isVideoPage = false;
-let currentVideoId = null;
-let videoDetailsExtracted = false;
-let modalInjected = false;
+// --- state ----------------------------------------------------------------------------------
+let currentVideoId = null; // the video we are currently analyzing / have analyzed
+let navigationToken = 0; // bumped on every navigation so stale async work can bail out
 let modalElement = null;
-let continueButtonTimer = null;
-let countdownValue = 5;
-let processingInProgress = false;
-let navigationObserverSet = false;
+let countdownTimer = null;
 let previousActiveElement = null;
 
-function isYouTubeMusicHost() {
-  return window.location.hostname === 'music.youtube.com';
+// --- navigation -----------------------------------------------------------------------------
+
+function onNavigate() {
+  if (!isExtensionAlive()) return;
+
+  recordHistory(location.href);
+
+  const videoId = getVideoId();
+  if (videoId === currentVideoId) return; // same video (or still not on a video page)
+
+  navigationToken++;
+  currentVideoId = videoId;
+  closeWarningModal();
+
+  if (videoId) analyzeCurrentVideo(videoId, navigationToken);
 }
 
-// Initialize when DOM is ready or immediately if already loaded
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initialize);
-} else {
-  initialize();
+function getVideoId() {
+  if (location.pathname !== "/watch") return null;
+  return new URLSearchParams(location.search).get("v");
 }
 
-// Wait for YouTube to be ready (it's a complex SPA)
-function initialize() {
-  if (isYouTubeMusicHost()) {
-    debugLog("[CS] Skipping initialization on music.youtube.com");
-    return;
-  }
-
-  debugLog("[CS] Initializing content script");
-  
-  // Check current page once on initialization
-  checkCurrentPage();
-  
-  // Set up message listener for background communication
-  setupMessageListener();
-  
-  // Set up navigation detection once the document is ready
-  setupNavigationDetection();
-  
-  // Instead of constant polling, use an adaptive check mechanism
-  setupAdaptiveChecking();
-}
-
-// Set up detection for YouTube SPA navigation - optimized version
-function setupNavigationDetection() {
-  if (navigationObserverSet) return;
-  
+/** After the extension is updated/reloaded, orphaned content scripts lose `chrome.runtime`. */
+function isExtensionAlive() {
   try {
-    // Method 1: Watch for URL changes using history API modification
-    const pushState = history.pushState;
-    const replaceState = history.replaceState;
-    
-    history.pushState = function() {
-      pushState.apply(history, arguments);
-      debugLog("[CS] pushState detected, checking page");
-      setTimeout(checkCurrentPage, 500);
-    };
-    
-    history.replaceState = function() {
-      replaceState.apply(history, arguments);
-      debugLog("[CS] replaceState detected, checking page");
-      setTimeout(checkCurrentPage, 500);
-    };
-    
-    // Listen for popstate events (browser back/forward)
-    window.addEventListener('popstate', () => {
-      debugLog("[CS] popstate detected, checking page");
-      setTimeout(checkCurrentPage, 500);
-    });
-    
-    // Method 2: Target specific YouTube elements instead of the entire body
-    // This is more efficient than watching the entire document
-    if (document.body) {
-      // Watch for the YouTube content area changes (more targeted)
-      const contentObserver = new MutationObserver(() => {
-        checkCurrentPage();
-      });
-      
-      // Find YouTube's main content container and observe it if available
-      const targetNode = document.querySelector('#content, #page-manager, ytd-watch-flexy');
-      if (targetNode) {
-        contentObserver.observe(targetNode, {
-          childList: true,
-          subtree: false // Don't need deep subtree watching
-        });
-        debugLog("[CS] YouTube content observer set up");
-      } else {
-        // Fallback to body observation with throttling
-        const bodyObserver = new MutationObserver((mutations) => {
-          // Throttle calls by checking if important nodes were modified
-          if (mutations.some(m => m.addedNodes.length > 0 && 
-              Array.from(m.addedNodes).some(node => 
-                node.nodeName === 'YTD-WATCH-FLEXY' || 
-                (node.id && (node.id === 'content' || node.id === 'page-manager'))
-              ))) {
-            checkCurrentPage();
-          }
-        });
-        
-        bodyObserver.observe(document.body, {
-          childList: true,
-          subtree: true,
-          attributes: false,
-          characterData: false
-        });
-        
-        debugLog("[CS] Fallback body observer set up");
-      }
-      
-      // Method 3: Use the PerformanceObserver API to detect navigation
-      if (PerformanceObserver) {
-        try {
-          const navigationObserver = new PerformanceObserver((entries) => {
-            for (const entry of entries.getEntries()) {
-              if (entry.entryType === 'navigation' || entry.name.includes('youtube.com')) {
-                debugLog("[CS] Navigation performance event detected");
-                setTimeout(checkCurrentPage, 500);
-              }
-            }
-          });
-          
-          navigationObserver.observe({ 
-            entryTypes: ['navigation', 'resource'],
-            buffered: true
-          });
-          
-          debugLog("[CS] Performance observer set up");
-        } catch (err) {
-          debugLog("[CS] Performance observer setup failed:", err);
-        }
-      }
-    } else {
-      // If body isn't ready yet, try again after a delay
-      debugLog("[CS] Body not available yet, will retry navigation detection setup");
-      setTimeout(setupNavigationDetection, 1000);
-      return;
-    }
-    
-    navigationObserverSet = true;
-    debugLog("[CS] Navigation detection set up successfully");
-  } catch (error) {
-    console.error("[CS] Error setting up navigation detection:", error);
+    return !!chrome.runtime?.id;
+  } catch {
+    return false;
   }
 }
 
-// Set up adaptive checking mechanism - only poll when needed and at lower frequency
-function setupAdaptiveChecking() {
-  let inactivityCounter = 0;
-  let checkInterval = null;
-  let lastUrl = window.location.href;
-  
-  // Check if user is interacting with the page
-  document.addEventListener('click', resetInactivity);
-  document.addEventListener('scroll', resetInactivity);
-  document.addEventListener('keypress', resetInactivity);
-  
-  function resetInactivity() {
-    inactivityCounter = 0;
-    
-    // If we don't have an interval running, start one at a moderate pace
-    if (!checkInterval) {
-      debugLog("[CS] Starting adaptive checking due to user activity");
-      checkInterval = setInterval(adaptiveCheck, 3000); // 3 seconds is much better than 1
-    }
-  }
-  
-  function adaptiveCheck() {
-    const currentUrl = window.location.href;
-    
-    // Check for URL changes
-    if (currentUrl !== lastUrl) {
-      lastUrl = currentUrl;
-      checkCurrentPage();
-      inactivityCounter = 0;
-      return;
-    }
-    
-    // Increment inactivity and potentially stop checking
-    inactivityCounter++;
-    
-    // If inactive for over 30 seconds (10 checks * 3s), slow down checking
-    if (inactivityCounter > 10) {
-      if (checkInterval) {
-        debugLog("[CS] Reducing check frequency due to inactivity");
-        clearInterval(checkInterval);
-        
-        // Switch to a much slower interval when user is inactive
-        checkInterval = setInterval(adaptiveCheck, 10000); // 10 seconds
-      }
-    }
-    
-    // If inactive for over 2 minutes, stop polling completely
-    if (inactivityCounter > 24) { // (10 checks * 3s) + (14 checks * 10s) ≈ 2 minutes
-      debugLog("[CS] Stopping automatic checking due to extended inactivity");
-      clearInterval(checkInterval);
-      checkInterval = null;
-    }
-    
-    // Still do a check, even when slowing down
-    checkCurrentPage();
-  }
-  
-  // Start with a single initial check
-  setTimeout(() => {
-    checkCurrentPage();
-    
-    // Start adaptive checking only if we're on a video page
-    if (isVideoPage) {
-      resetInactivity();
-    }
-  }, 1500);
-}
+// --- analysis -------------------------------------------------------------------------------
 
-// Check if we're on a YouTube video page
-function checkCurrentPage() {
+async function analyzeCurrentVideo(videoId, token) {
+  const details = await waitForVideoDetails(videoId, token);
+  if (!details || token !== navigationToken) return;
+
+  let response;
   try {
-    if (isYouTubeMusicHost()) {
-      if (isVideoPage) {
-        isVideoPage = false;
-        currentVideoId = null;
-        videoDetailsExtracted = false;
-      }
-      return;
-    }
-
-    const url = window.location.href;
-    const videoId = getVideoIdFromUrl(url);
-    
-    // Determine if we're on a video page with a valid video ID
-    const onVideoPage = videoId && url.includes('youtube.com/watch');
-    
-    // If not already processing this video
-    if (onVideoPage && (!isVideoPage || videoId !== currentVideoId)) {
-      debugLog(`[CS] Detected new video: ${url} (ID: ${videoId}, previous: ${currentVideoId})`);
-      
-      isVideoPage = true;
-      currentVideoId = videoId;
-      videoDetailsExtracted = false;
-      
-      // Process the video after a slight delay to let page content load
-      setTimeout(processVideoPage, 1000);
-    } 
-    // If we've navigated away from a video page
-    else if (!onVideoPage && isVideoPage) {
-      debugLog("[CS] Left video page");
-      isVideoPage = false;
-      currentVideoId = null;
-      videoDetailsExtracted = false;
-    }
+    response = await chrome.runtime.sendMessage({ action: "analyzeVideo", videoId, ...details });
   } catch (error) {
-    console.error("[CS] Error in checkCurrentPage:", error);
+    debugLog("sendMessage failed:", error);
+    return; // extension reloaded or worker unavailable: nothing useful to tell the user
+  }
+
+  // The user may have moved on to another video while the server was thinking.
+  if (token !== navigationToken) return;
+
+  if (response?.status === "ok" && response.alignsWithFocus === false) {
+    showWarningModal();
+  } else if (response?.status === "error") {
+    showToast(response.error);
   }
 }
 
-// Process a video page by extracting details and sending to background
-function processVideoPage() {
-  if (!isVideoPage || processingInProgress) return;
-  
-  try {
-    processingInProgress = true;
-    debugLog("[CS] Processing video page");
-    
-    // Make sure YouTube page is fully loaded before extraction
-    if (document.readyState !== 'complete') {
-      debugLog("[CS] Page not fully loaded, delaying extraction");
-      setTimeout(() => {
-        processingInProgress = false;
-        processVideoPage();
-      }, 1000);
-      return;
+/** Poll until YouTube has rendered this video's metadata (or give up and return null). */
+async function waitForVideoDetails(videoId, token) {
+  for (let attempt = 0; attempt < DETAIL_POLL_MAX_ATTEMPTS; attempt++) {
+    if (token !== navigationToken) return null;
+
+    const details = extractVideoDetails(videoId);
+    if (details && (details.videoDescription || attempt >= DESCRIPTION_GRACE_ATTEMPTS)) {
+      return details;
     }
-    
-    // Extract video details
-    const details = extractVideoDetails();
-    
-    // Only send if we have a title
-    if (details.videoTitle) {
-      debugLog("[CS] Sending video details to background script");
-      debugLog("[CS] Title:", details.videoTitle);
-      debugLog("[CS] Description:", details.videoDescription || "(No description)");
-      
-      // Ensure videoDescription is never undefined (server rejects undefined values)
-      const videoDescription = details.videoDescription || "";
-      
-      chrome.runtime.sendMessage({
-        action: "fullVideoDetails",
-        videoTitle: details.videoTitle,
-        videoDescription: videoDescription
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error("[CS] Error sending video details:", chrome.runtime.lastError);
-        } else {
-          debugLog("[CS] Background script response:", response);
-        }
-        processingInProgress = false;
-      });
-      
-      videoDetailsExtracted = true;
-    } else {
-      // If extraction failed, retry after a delay
-      debugLog("[CS] Video details extraction failed, retrying in 2 seconds");
-      setTimeout(() => {
-        processingInProgress = false;
-        processVideoPage();
-      }, 2000);
-    }
-  } catch (error) {
-    console.error("[CS] Error processing video page:", error);
-    processingInProgress = false;
+    await new Promise((resolve) => setTimeout(resolve, DETAIL_POLL_INTERVAL_MS));
   }
+  return null;
 }
 
-// Extract video ID from URL
-function getVideoIdFromUrl(url) {
-  try {
-    const match = url.match(/[?&]v=([^&#]*)/);
-    return match ? match[1] : null;
-  } catch (error) {
-    console.error("[CS] Error extracting video ID:", error);
-    return null;
-  }
-}
+/**
+ * Read title/description/channel for `videoId` from the page.
+ * Returns null while the page still shows a previous video or hasn't rendered yet.
+ */
+function extractVideoDetails(videoId) {
+  // YouTube keeps the previous video's DOM around for a moment after an SPA navigation.
+  const watchFlexy = document.querySelector("ytd-watch-flexy");
+  if (watchFlexy && watchFlexy.getAttribute("video-id") !== videoId) return null;
 
-// Extract video details
-function extractVideoDetails() {
-  let videoTitle = "";
-  let videoDescription = ""; // Initialize with empty string instead of undefined
+  const videoTitle = readTitle();
+  if (!videoTitle) return null;
 
-  try {
-    // Try multiple ways to get the title
-    // First check document.title directly (most reliable)
-    if (document.title && document.title !== "YouTube") {
-      videoTitle = document.title.replace(' - YouTube', '').trim();
-    }
-
-    // If title is still empty, try various selectors
-    if (!videoTitle || videoTitle === '' || videoTitle === 'YouTube') {
-      const titleSelectors = [
-        'h1.title', 
-        'h1.ytd-watch-metadata',
-        'ytd-watch-metadata h1.title',
-        'h1.title yt-formatted-string',
-        '#container h1.title', 
-        '#meta h1',
-        '#above-the-fold #title h1',
-        '#title h1',
-        '#title',
-        '#info-contents h1',
-        '#video-title',
-        'meta[property="og:title"]',
-        'meta[name="title"]'
-      ];
-
-      for (const selector of titleSelectors) {
-        const element = document.querySelector(selector);
-        if (element) {
-          const text = element.matches('meta') ? element.content : element.textContent;
-          if (text && text.trim()) {
-            videoTitle = text.trim();
-            break;
-          }
-        }
-      }
-    }
-
-    debugLog("[CS] Extracted title:", videoTitle);
-    
-    // Try to get the description - multiple approaches
-    const descriptionSelectors = [
-      '#description ytd-text-inline-expander',
-      '#description #description-text',
-      '#description #content',
-      '#description',
-      '.ytd-text-inline-expander',
-      'ytd-expander[expanded] #content',
-      'ytd-expander #content',
-      '#meta-contents #description',
-      'meta[property="og:description"]',
-      'meta[name="description"]'
-    ];
-
-    for (const selector of descriptionSelectors) {
-      const element = document.querySelector(selector);
-      if (element) {
-        const text = element.matches('meta') ? 
-          element.content : 
-          element.textContent || element.innerText;
-        
-        if (text && text.trim()) {
-          videoDescription = text.trim();
-          debugLog("[CS] Found description with selector:", selector);
-          break;
-        }
-      }
-    }
-
-    // Try to expand the description by clicking "Show more" if available
-    if (!videoDescription || videoDescription.length < 50) {
-      const showMoreButtons = [
-        '#expand',
-        '#description tp-yt-paper-button#expand',
-        '#description #expand',
-        '#more-button',
-        '.more-button',
-        'ytd-text-inline-expander tp-yt-paper-button',
-        'button.ytd-expander',
-        'ytd-expander #more'
-      ];
-      
-      for (const buttonSelector of showMoreButtons) {
-        const showMoreButton = document.querySelector(buttonSelector);
-        if (showMoreButton) {
-          try {
-            debugLog("[CS] Found Show More button:", buttonSelector);
-            showMoreButton.click();
-            debugLog("[CS] Clicked 'Show more' button");
-            
-            // Try again to get the expanded description
-            setTimeout(() => {
-              for (const selector of descriptionSelectors) {
-                const element = document.querySelector(selector);
-                if (element) {
-                  const text = element.matches('meta') ? 
-                    element.content : 
-                    element.textContent || element.innerText;
-                  
-                  if (text && text.trim() && text.length > videoDescription.length) {
-                    videoDescription = text.trim();
-                  }
-                }
-              }
-            }, 300);
-            
-            break;
-          } catch (e) {
-            debugLog("[CS] Error clicking 'Show more' button:", e);
-          }
-        }
-      }
-    }
-
-    debugLog("[CS] Extracted description length:", videoDescription?.length || 0);
-    
-    // Fallback: if we still can't get a description but have a title, create a minimal description
-    if ((!videoDescription || videoDescription.length === 0) && videoTitle) {
-      videoDescription = `Video: ${videoTitle}`;
-      debugLog("[CS] Using fallback description");
-    }
-    
-  } catch (error) {
-    console.error("[CS] Error extracting video details:", error);
-    // Ensure we still return something
-    if (videoTitle && !videoDescription) {
-      videoDescription = `Video: ${videoTitle}`;
-    }
-  }
-  
-  return { 
-    videoTitle: videoTitle || "", 
-    videoDescription: videoDescription || "" 
+  return {
+    videoTitle,
+    videoDescription: readDescription(),
+    channelName: readText(CHANNEL_SELECTORS, 120)
   };
 }
 
-// Set up message listener
-function setupMessageListener() {
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    debugLog("[CS] Received message:", request);
-    
-    if (request.action === "extractVideoDetails") {
-      const details = extractVideoDetails();
-      sendResponse(details);
-    } else if (request.action === "showWarning") {
-      showWarningModal();
-      sendResponse({ status: "Warning modal process initiated by content script." });
-    } else if (request.action === "showError") {
-      showErrorMessage(request.errorMessage || "Unable to analyze video content");
-      sendResponse({ status: "Error message displayed." });
-    } else {
-      sendResponse({status: "Message received by content script, no specific action or unhandled."});
-    }
-    
-    return true; // Keep channel open for async
-  });
+// document.title is the most stable source: "(3) Some title - YouTube" -> "Some title".
+function readTitle() {
+  const title = document.title
+    .replace(/^\(\d+\)\s*/, "")
+    .replace(/\s*-\s*YouTube$/, "")
+    .trim();
+  return title && title !== "YouTube" ? title : "";
 }
 
-// Display error message to the user
-function showErrorMessage(message) {
-  // Create a temporary error message element
-  const errorElement = document.createElement('div');
-  errorElement.className = 'focus-guard-error';
-  errorElement.style.position = 'fixed';
-  errorElement.style.top = '10px';
-  errorElement.style.right = '10px';
-  errorElement.style.zIndex = '9999';
-  errorElement.style.backgroundColor = 'var(--toast-bg, #f44336)';
-  errorElement.style.color = 'var(--toast-text, #fff)';
-  errorElement.style.padding = '12px 20px';
-  errorElement.style.borderRadius = '4px';
-  errorElement.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
-  errorElement.style.fontSize = '14px';
-  errorElement.style.maxWidth = '400px';
-  errorElement.style.animation = 'fadeIn 0.3s ease-out';
-  
-  errorElement.textContent = `Rebound: ${message}`;
-  
-  // Add it to the page
-  document.body.appendChild(errorElement);
-  
-  // Remove after 5 seconds
-  setTimeout(() => {
-    if (errorElement.parentNode === document.body) {
-      errorElement.style.animation = 'fadeOut 0.3s ease-out';
-      
-      // Remove after animation completes
-      setTimeout(() => {
-        if (errorElement.parentNode === document.body) {
-          document.body.removeChild(errorElement);
-        }
-      }, 300);
-    }
-  }, 5000);
-  
-  // Add CSS for animations and system theme
-  if (!document.querySelector('#focus-guard-error-styles')) {
-    const styleElement = document.createElement('style');
-    styleElement.id = 'focus-guard-error-styles';
-    styleElement.textContent = `
-      .focus-guard-error {
-        --toast-bg: #f44336;
-        --toast-text: #fff;
-      }
-      @media (prefers-color-scheme: dark) {
-        .focus-guard-error {
-          --toast-bg: #222;
-          --toast-text: #fff;
-        }
-      }
-      @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(-20px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-      @keyframes fadeOut {
-        from { opacity: 1; transform: translateY(0); }
-        to { opacity: 0; transform: translateY(-20px); }
-      }
-    `;
-    document.head.appendChild(styleElement);
+// Tried in order; YouTube renames these now and then, so keep several candidates.
+// The collapsed "snippet" (the first ~200 characters of the description) is clean text that is
+// always in the DOM; the full expander also contains chapter lists, cards and button labels.
+const DESCRIPTION_SELECTORS = [
+  "ytd-watch-metadata #description-inline-expander #attributed-snippet-text",
+  "ytd-watch-metadata #description-inline-expander #snippet-text",
+  "ytd-watch-metadata #description-inline-expander #expanded",
+  "ytd-watch-metadata #description-inline-expander"
+];
+
+const CHANNEL_SELECTORS = [
+  "ytd-watch-metadata #owner ytd-channel-name a",
+  "#owner ytd-channel-name a",
+  "ytd-video-owner-renderer ytd-channel-name a"
+];
+
+function readDescription() {
+  // Reading textContent needs no interaction, so we never click "Show more" and never change
+  // the user's page.
+  return readText(DESCRIPTION_SELECTORS, MAX_DESCRIPTION_LENGTH).replace(/\s*(?:\.\.\.|…)\s*more$/i, "");
+}
+
+function readText(selectors, maxLength) {
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    const text = element?.textContent?.replace(/\s+/g, " ").trim();
+    if (text) return text.slice(0, maxLength);
+  }
+  return "";
+}
+
+// --- "go back" history ----------------------------------------------------------------------
+// Kept in sessionStorage (per tab, survives full page loads) so the background worker doesn't
+// need the `tabs` permission or any in-memory state.
+
+function readHistory() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(HISTORY_KEY));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
 
-// Get video player
+function recordHistory(url) {
+  try {
+    const history = readHistory();
+    if (history[history.length - 1] === url) return;
+    history.push(url);
+    sessionStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-HISTORY_MAX_ENTRIES)));
+  } catch {
+    // sessionStorage can be unavailable (e.g. blocked storage): going back just defaults to home.
+  }
+}
+
+/** Most recent YouTube page that isn't a video, or the homepage. */
+function getPreviousNonVideoUrl() {
+  const history = readHistory();
+  for (let i = history.length - 2; i >= 0; i--) {
+    try {
+      const url = new URL(history[i]);
+      if (url.origin === location.origin && url.pathname !== "/watch") return url.href;
+    } catch {
+      // ignore malformed entries
+    }
+  }
+  return `${location.origin}/`;
+}
+
+function goBack() {
+  location.assign(getPreviousNonVideoUrl());
+}
+
+// --- player ---------------------------------------------------------------------------------
+
 function getVideoPlayer() {
-  return document.querySelector('video.html5-main-video');
+  return document.querySelector("video.html5-main-video");
 }
 
-// Pause video
 function pauseVideo() {
-  const videoPlayer = getVideoPlayer();
-  if (videoPlayer && !videoPlayer.paused) {
-    videoPlayer.pause();
-    debugLog("[CS] Video paused.");
-  } else {
-    debugLog("[CS] Video player not found or already paused.");
-  }
+  const player = getVideoPlayer();
+  if (player && !player.paused) player.pause();
 }
 
-// Resume video
 function resumeVideo() {
-  const videoPlayer = getVideoPlayer();
-  if (videoPlayer && videoPlayer.paused) {
-    videoPlayer.play()
-      .then(() => debugLog("[CS] Video resumed successfully."))
-      .catch(error => console.error("[CS] Error resuming video:", error));
-  } else {
-    debugLog("[CS] Video player not found or already playing.");
-  }
+  const player = getVideoPlayer();
+  if (player?.paused) player.play().catch((error) => debugLog("resume failed:", error));
 }
 
-// Display a random quote
+// --- warning modal --------------------------------------------------------------------------
+
+async function showWarningModal() {
+  pauseVideo();
+  previousActiveElement = document.activeElement;
+
+  if (!modalElement) await injectModal();
+
+  modalElement.style.display = "flex";
+  modalElement.addEventListener("keydown", handleModalKeydown);
+  displayRandomQuote();
+  startCountdown();
+
+  // Safe default focus: "No, Go Back".
+  setTimeout(() => (modalElement.querySelector("#focusGuardNo") || modalElement).focus(), 50);
+}
+
+/** Build the modal with DOM APIs: no HTML parsing, no web-accessible resource needed. */
+async function injectModal() {
+  const make = (tag, props = {}, ...children) => {
+    const element = document.createElement(tag);
+    for (const [name, value] of Object.entries(props)) {
+      if (name === "text") element.textContent = value;
+      else element.setAttribute(name, value);
+    }
+    element.append(...children);
+    return element;
+  };
+
+  const yes = make("button", { id: "focusGuardYes", "aria-disabled": "true" },
+    "Yes, Continue (", make("span", { id: "countdown", text: String(COUNTDOWN_SECONDS) }), ")");
+  const no = make("button", { id: "focusGuardNo", text: "No, Go Back" });
+
+  modalElement = make("div", {
+    id: "focusGuardModal",
+    class: "focus-guard-modal",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "modalTitle",
+    "aria-describedby": "warningText"
+  },
+    make("div", { class: "focus-guard-modal-content" },
+      make("div", { class: "modal-header" }, make("h2", { id: "modalTitle", text: "Rebound" })),
+      make("div", { class: "quote-container", "aria-live": "polite" },
+        make("p", { id: "quoteText" }), make("p", { id: "quoteAuthor" })),
+      make("div", { class: "warning-message", id: "warningText" },
+        make("p", { text: "This content may not align with your focus areas." }),
+        make("p", { text: "Do you still want to continue?" })),
+      make("div", { class: "button-container" }, no, yes)));
+
+  yes.addEventListener("click", () => {
+    if (yes.getAttribute("aria-disabled") === "true") return;
+    closeWarningModal();
+    resumeVideo();
+  });
+  no.addEventListener("click", () => {
+    closeWarningModal();
+    goBack();
+  });
+
+  document.body.appendChild(modalElement);
+  return true;
+}
+
+function closeWarningModal() {
+  clearInterval(countdownTimer);
+  if (!modalElement || modalElement.style.display === "none") return;
+
+  modalElement.style.display = "none";
+  modalElement.removeEventListener("keydown", handleModalKeydown);
+  previousActiveElement?.focus?.();
+}
+
 function displayRandomQuote() {
-  if (typeof getRandomQuote !== 'function') {
-    console.error("[CS] getRandomQuote function not available");
-    return;
-  }
-  
+  if (typeof getRandomQuote !== "function") return;
   const quote = getRandomQuote();
-  const quoteTextElement = document.getElementById('quoteText');
-  const quoteAuthorElement = document.getElementById('quoteAuthor');
-  
-  if (quoteTextElement && quoteAuthorElement) {
-    quoteTextElement.textContent = `"${quote.text}"`;
-    quoteAuthorElement.textContent = `— ${quote.author}`;
+  const text = modalElement.querySelector("#quoteText");
+  const author = modalElement.querySelector("#quoteAuthor");
+  if (text && author) {
+    text.textContent = `"${quote.text}"`;
+    author.textContent = `— ${quote.author}`;
   }
 }
 
-// Start countdown
+/** "Yes, continue" unlocks after a short cooldown: the friction is the point. */
 function startCountdown() {
-  const countdownElement = document.getElementById('countdown');
-  const continueButton = document.getElementById('focusGuardYes');
-  
-  if (!countdownElement || !continueButton) {
-    console.error("[CS] Countdown element or continue button not found");
-    return;
-  }
-  
-  countdownValue = 5;
-  countdownElement.textContent = countdownValue;
-  
-  // Disable the continue button initially
-  continueButton.classList.remove('active');
-  continueButton.setAttribute('aria-disabled', 'true');
-  
-  continueButtonTimer = setInterval(() => {
-    countdownValue -= 1;
-    countdownElement.textContent = countdownValue;
-    
-    if (countdownValue <= 0) {
-      clearInterval(continueButtonTimer);
-      continueButton.classList.add('active');
-      continueButton.setAttribute('aria-disabled', 'false');
+  const countdown = modalElement.querySelector("#countdown");
+  const yes = modalElement.querySelector("#focusGuardYes");
+  if (!countdown || !yes) return;
+
+  clearInterval(countdownTimer);
+  let remaining = COUNTDOWN_SECONDS;
+  countdown.textContent = remaining;
+  yes.classList.remove("active");
+  yes.setAttribute("aria-disabled", "true");
+
+  countdownTimer = setInterval(() => {
+    remaining -= 1;
+    countdown.textContent = Math.max(remaining, 0);
+    if (remaining <= 0) {
+      clearInterval(countdownTimer);
+      yes.classList.add("active");
+      yes.setAttribute("aria-disabled", "false");
     }
   }, 1000);
 }
 
-// Handle keyboard navigation inside modal - trap focus
+/** Escape closes the modal; Tab is trapped inside it (dialog accessibility). */
 function handleModalKeydown(event) {
-  // If Escape pressed, close the modal
-  if (event.key === 'Escape') {
-    closeWarningModal();
+  if (event.key === "Escape") {
     event.preventDefault();
+    closeWarningModal();
     return;
   }
-  
-  // Only trap focus if Tab key is pressed
-  if (event.key !== 'Tab') return;
-  
-  // Get all focusable elements in the modal
-  const focusableElements = modalElement.querySelectorAll(
-    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-  );
-  
-  if (focusableElements.length === 0) return;
-  
-  const firstElement = focusableElements[0];
-  const lastElement = focusableElements[focusableElements.length - 1];
-  
-  // If shift+tab pressed and first element is active, move to last element
-  if (event.shiftKey && document.activeElement === firstElement) {
-    lastElement.focus();
+  if (event.key !== "Tab") return;
+
+  const focusable = modalElement.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+  if (focusable.length === 0) return;
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    last.focus();
     event.preventDefault();
-  } 
-  // If tab pressed and last element is active, move to first element
-  else if (!event.shiftKey && document.activeElement === lastElement) {
-    firstElement.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    first.focus();
     event.preventDefault();
   }
 }
 
-// Close the warning modal
-function closeWarningModal() {
-  if (modalElement) {
-    modalElement.style.display = 'none';
-    
-    // Remove the keydown event listener
-    modalElement.removeEventListener('keydown', handleModalKeydown);
-    
-    // Restore focus to previous element
-    if (previousActiveElement) {
-      previousActiveElement.focus();
-    }
-  }
-  
-  if (continueButtonTimer) {
-    clearInterval(continueButtonTimer);
-  }
+// --- error toast ----------------------------------------------------------------------------
+
+function showToast(message) {
+  document.querySelector(".focus-guard-error")?.remove(); // never stack toasts
+
+  const toast = document.createElement("div");
+  toast.className = "focus-guard-error";
+  toast.setAttribute("role", "status");
+  toast.textContent = `Rebound: ${message || "Unable to analyze video content"}`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 5000);
 }
 
-// Show warning modal
-async function showWarningModal() {
-  debugLog("[CS] showWarningModal called.");
-  pauseVideo();
+// --- start ----------------------------------------------------------------------------------
+// Kept at the bottom on purpose: onNavigate() runs immediately and needs every const above.
 
-  // Store the current active element to restore focus later
-  previousActiveElement = document.activeElement;
-
-  if (!modalInjected) {
-    debugLog("[CS] Modal not injected yet. Fetching and injecting...");
-    try {
-      const modalUrl = chrome.runtime.getURL('warning_modal.html');
-      const response = await fetch(modalUrl);
-      if (!response.ok) {
-        console.error("[CS] Failed to fetch warning_modal.html:", response.status, response.statusText);
-        return;
-      }
-      const modalHTML = await response.text();
-      const parser = new DOMParser();
-      const parsedModalDocument = parser.parseFromString(modalHTML, 'text/html');
-      modalElement = parsedModalDocument.body.firstElementChild;
-      if (!modalElement) {
-        console.error("[CS] Failed to create modal element from HTML.");
-        return;
-      }
-      document.body.appendChild(modalElement);
-      modalInjected = true;
-      debugLog("[CS] Modal injected.");
-
-      const yesButton = modalElement.querySelector('#focusGuardYes');
-      const noButton = modalElement.querySelector('#focusGuardNo');
-
-      if (yesButton) {
-        yesButton.addEventListener('click', () => {
-          debugLog("[CS] 'Continue' clicked.");
-          closeWarningModal();
-          resumeVideo(); // Resume the video when user clicks continue
-        });
-      } else { console.error("[CS] Yes button not found in modal."); }
-
-      if (noButton) {
-        noButton.addEventListener('click', () => {
-          debugLog("[CS] 'No, Go Back' clicked.");
-          closeWarningModal();
-          chrome.runtime.sendMessage({ action: "goBack" }, (res) => {
-            if (chrome.runtime.lastError) {
-              console.error("[CS] Error sending goBack message:", chrome.runtime.lastError.message);
-            }
-          });
-        });
-      } else { console.error("[CS] No button not found in modal."); }
-
-    } catch (error) {
-      console.error("[CS] Error injecting modal:", error);
-      return;
-    }
-  }
-  if (modalElement) {
-    debugLog("[CS] Displaying modal.");
-    modalElement.style.display = 'flex';
-    
-    // Set up focus trap
-    modalElement.addEventListener('keydown', handleModalKeydown);
-    
-    displayRandomQuote();
-    startCountdown();
-    
-    // Focus on the "No, Go Back" button or the modal itself if button not found
-    setTimeout(() => {
-      const noButton = modalElement.querySelector('#focusGuardNo');
-      if (noButton) {
-        noButton.focus();
-      } else {
-        modalElement.focus();
-      }
-    }, 50);
-  } else {
-    console.error("[CS] Modal element is null, cannot display after injection attempt.");
-  }
-} 
+// `yt-navigate-finish` fires after each SPA navigation (including back/forward);
+// `yt-page-data-updated` is a backup for when a page's data is refreshed in place.
+window.addEventListener("yt-navigate-finish", onNavigate);
+window.addEventListener("yt-page-data-updated", onNavigate);
+// Direct loads (or the extension being enabled mid-session) may never emit those events.
+onNavigate();

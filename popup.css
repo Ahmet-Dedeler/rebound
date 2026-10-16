@@ -354,3 +354,10 @@ input:checked + .slider:before {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-text);
 } 
+/* Inline SVG icons (no remote icon font) */
+.icon {
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  flex: none;
+}
